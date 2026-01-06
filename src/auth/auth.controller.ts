@@ -29,7 +29,7 @@ export class AuthController {
   }
 
   @Post('login')
-@Throttle({ short: { limit: 10, ttl: 60000 } })
+@Throttle({ short: { limit: 5, ttl: 60000 } })
 @UsePipes(new ValidationPipe({ whitelist: true }))
 async login(@Body() body: LoginDto, @Req() req: express.Request) {
   const ip = req.ip || req.socket.remoteAddress;
