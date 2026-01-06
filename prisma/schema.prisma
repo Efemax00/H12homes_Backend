@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+  @@index([token])
+}
+
+
+model User {
+  id         String   @id @default(uuid()) @db.Uuid
+  email      String   @unique
+  phone      String?
+  password   String
+  firstName  String   @map("first_name")
+  middleName String?  @map("middle_name")
+  lastName   String   @map("last_name")
+  avatarUrl  String?  @map("avatar_url")
+  role       Role     @default(USER)
+
+  failedLoginAttempts Int       @default(0)
+  accountLockedUntil  DateTime?
+  refreshTokens       RefreshToken[]
+  lastLoginAttempt    DateTime?
+  
+
+  items      Item[]
+
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  passwordResetToken String? @unique
+  passwordResetTokenExpiresAt DateTime?
+
+  isEmailVerified     Boolean   @default(false)
+  emailVerificationToken String? @unique
+  emailVerificationTokenExpiresAt DateTime?
+}
+
+
+enum Role {
+  USER
+  SELLER
+  ADMIN
+}
+
+model Item {
+  id             String   @id @default(uuid()) @db.Uuid
+  title          String
+  shortDesc      String
+  longDesc       String
+  dos            String?
+  donts          String?
+  price          Float
+  location       String
+  contactInfo    String?
+  status         ItemStatus @default(PENDING)
+  isFeatured     Boolean    @default(false)
+
+  images         ItemImage[]
+
+  ownerId        String?    @db.Uuid
+  owner          User?      @relation(fields: [ownerId], references: [id])
+
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+}
+
+model ItemImage {
+  id        String @id @default(uuid()) @db.Uuid  
+  url       String
+  order     Int    @default(0)
+
+  itemId    String @db.Uuid
+  item      Item   @relation(fields: [itemId], references: [id])
+}
+
+enum ItemStatus {
+  PENDING
+  AVAILABLE
+  SOLD
+  REJECTED
+}
+
+
