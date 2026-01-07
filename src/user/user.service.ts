@@ -1,5 +1,3 @@
-// Add these methods to your user.service.ts file
-
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service'; 
 import { User, RefreshToken } from '@prisma/client';
@@ -96,7 +94,6 @@ export class UserService {
     });
   }
 
-  // Delete all refresh tokens for a user (useful for logout from all devices)
   async deleteAllUserRefreshTokens(userId: string): Promise<void> {
     await this.prisma.refreshToken.deleteMany({
       where: { userId },
@@ -159,6 +156,17 @@ export class UserService {
       data: {
         passwordResetToken: null,
         passwordResetTokenExpiresAt: null,
+      },
+    });
+  }
+
+  // ==================== AVATAR UPDATE ====================
+  
+  async updateAvatar(userId: string, avatarUrl: string): Promise<User> {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        avatarUrl: avatarUrl,
       },
     });
   }
