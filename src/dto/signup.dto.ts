@@ -1,4 +1,4 @@
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsString, MinLength, IsOptional } from 'class-validator';
 import { IsStrongPassword } from '../validators/password-strength.validator';
 
 export class SignupDto {
@@ -16,4 +16,15 @@ export class SignupDto {
   @IsString()
   @MinLength(2)
   lastName: string;
+
+  @IsOptional()
+  @IsString()
+  middleName?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  location?: string; 
 }

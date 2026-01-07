@@ -25,6 +25,7 @@ export class AuthService {
     middleName?: string;
     lastName: string;
     phone?: string;
+    location?: string;
   }): Promise<Omit<User, 'password'>> {
     const existing = await this.userService.findByEmail(data.email);
     if (existing) {
