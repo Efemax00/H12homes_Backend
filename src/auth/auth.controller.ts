@@ -22,7 +22,7 @@ export class AuthController {
   constructor(private auth: AuthService) {}
 
   @Post('signup')
-  @Throttle({ short: { limit: 1, ttl: 1000 }, long: { limit: 5, ttl: 900000 } })
+  @Throttle({ short: { limit: 3, ttl: 1000 }, long: { limit: 5, ttl: 900000 } })
   @UsePipes(new ValidationPipe({ whitelist: true }))
   signup(@Body() body: SignupDto) {
     return this.auth.signup(body);
