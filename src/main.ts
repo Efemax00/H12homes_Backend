@@ -12,8 +12,22 @@ async function bootstrap() {
   // Express middleware
   app.use(express.json());
 
-  await app.listen(3000);
-  console.log('✅ Application is running on http://localhost:3000');
+  app.enableCors({
+  origin: [
+    'http://localhost:5173',
+    'https://h12homes.web.app',
+    'https://h12homes.shop',
+    'https://admin.h12homes.shop',
+    'https://admin.h12homes.web.app',
+    'https://h12homes.com',
+  ],
+  credentials: true,
+});
+
+
+  const port = process.env.PORT || 3000;
+await app.listen(port);
+console.log(`✅ Application is running on http://localhost:${port}`);
 }
 
 bootstrap();
