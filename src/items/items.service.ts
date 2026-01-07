@@ -1,12 +1,16 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CloudinaryService } from '../cloudinary/cloudinary.service'; 
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { ItemStatus } from '@prisma/client';
 
 @Injectable()
 export class ItemsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private cloudinaryService: CloudinaryService, 
+  ) {}
 
   // ======================
   // PUBLIC ROUTES
@@ -54,14 +58,31 @@ export class ItemsService {
   // USER ROUTES (AUTH REQUIRED)
   // ======================
 
-  async createItem(dto: CreateItemDto, userId: string) {
-    // Users submit items, but they are NOT featured
+  async createItem(dto: CreateItemDto, userId: string, files: Express.Multer.File[]) {
+    // ✅ UPDATED - Upload all images to Cloudinary first
+    const imageUrls: string[] = [];
+    
+    for (const file of files) {
+      const url = await this.cloudinaryService.uploadPropertyImage(file);
+      imageUrls.push(url);
+    }
+
+    // ✅ UPDATED - Create item with images
     return this.prisma.item.create({
       data: {
         ...dto,
         ownerId: userId,
-        status: ItemStatus.PENDING, // submitted for admin approval
-        isFeatured: false,          // cannot feature items themselves
+        status: ItemStatus.PENDING,
+        isFeatured: false,
+        images: {
+          create: imageUrls.map((url, index) => ({
+            url,
+            order: index,
+          })),
+        },
+      },
+      include: {
+        images: true, // ✅ ADDED - Return images in response
       },
     });
   }

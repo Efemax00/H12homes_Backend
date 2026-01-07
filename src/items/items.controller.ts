@@ -8,7 +8,11 @@ import {
   Body,
   UseGuards,
   Req,
+  UseInterceptors,
+  UploadedFiles,
+  BadRequestException,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import { ItemsService } from './items.service';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
@@ -43,9 +47,33 @@ export class ItemsController {
 
   @UseGuards(JwtAuthGuard)
   @Post()
-  create(@Body() dto: CreateItemDto, @Req() req) {
+  @UseInterceptors(FilesInterceptor('images', 10)) // ✅ ADDED - Allow up to 10 images
+  async create(
+    @Body() dto: CreateItemDto,
+    @Req() req,
+    @UploadedFiles() files: Express.Multer.File[], // ✅ ADDED - Handle uploaded files
+  ) {
+    // ✅ ADDED - Validate images
+    if (!files || files.length === 0) {
+      throw new BadRequestException('At least one image is required');
+    }
+
+    // ✅ ADDED - Validate file types
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+    for (const file of files) {
+      if (!allowedMimeTypes.includes(file.mimetype)) {
+        throw new BadRequestException('Only JPEG, PNG, and WebP images are allowed');
+      }
+      
+      // ✅ ADDED - Validate file size (max 5MB per image)
+      const maxSize = 5 * 1024 * 1024;
+      if (file.size > maxSize) {
+        throw new BadRequestException('Each image must be less than 5MB');
+      }
+    }
+
     // Users submit items, will NOT be featured
-    return this.itemsService.createItem(dto, req.user.id);
+    return this.itemsService.createItem(dto, req.user.id, files); // ✅ UPDATED - Pass files
   }
 
   @UseGuards(JwtAuthGuard)

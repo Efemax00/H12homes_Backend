@@ -70,6 +70,11 @@ model Item {
   status         ItemStatus @default(PENDING)
   isFeatured     Boolean    @default(false)
 
+  bedrooms       Int?       // 1, 2, 3, etc. (will display as "1 bedroom", "2 bedrooms")
+  bathrooms      Int?       // 1, 2, 3, etc. (will display as "1 bathroom", "2 bathrooms")
+  sqft           Float?     // Square footage
+  propertyType   String?    // "Duplex", "Apartment", "Flat", "Detached", etc.
+
   images         ItemImage[]
 
   ownerId        String?    @db.Uuid
