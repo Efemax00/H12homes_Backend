@@ -54,38 +54,67 @@ export class ItemsService {
     };
   }
 
+  async getAllItemsWithAdmin() {
+  return this.prisma.item.findMany({
+    include: {
+      images: true,
+      createdByUser: { // ✅ Include admin who posted it
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          avatarUrl: true,
+        },
+      },
+    },
+    orderBy: [
+      { isFeatured: 'desc' },
+      { createdAt: 'desc' },
+    ],
+  });
+}
+
   // ======================
   // USER ROUTES (AUTH REQUIRED)
   // ======================
 
   async createItem(dto: CreateItemDto, userId: string, files: Express.Multer.File[]) {
-    // ✅ UPDATED - Upload all images to Cloudinary first
-    const imageUrls: string[] = [];
-    
-    for (const file of files) {
-      const url = await this.cloudinaryService.uploadPropertyImage(file);
-      imageUrls.push(url);
-    }
+  const imageUrls: string[] = [];
+  
+  for (const file of files) {
+    const url = await this.cloudinaryService.uploadPropertyImage(file);
+    imageUrls.push(url);
+  }
 
-    // ✅ UPDATED - Create item with images
-    return this.prisma.item.create({
-      data: {
-        ...dto,
-        ownerId: userId,
-        status: ItemStatus.PENDING,
-        isFeatured: false,
-        images: {
-          create: imageUrls.map((url, index) => ({
-            url,
-            order: index,
-          })),
+  return this.prisma.item.create({
+    data: {
+      ...dto,
+      ownerId: userId,
+      createdBy: userId, // ✅ Track creator
+      status: ItemStatus.PENDING,
+      isFeatured: false,
+      images: {
+        create: imageUrls.map((url, index) => ({
+          url,
+          order: index,
+        })),
+      },
+    },
+    include: {
+      images: true,
+      createdByUser: { // ✅ Include creator info
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          avatarUrl: true,
         },
       },
-      include: {
-        images: true, // ✅ ADDED - Return images in response
-      },
-    });
-  }
+    },
+  });
+}
 
   async updateOwnItem(itemId: string, dto: UpdateItemDto, userId: string) {
     const item = await this.prisma.item.findUnique({ where: { id: itemId } });

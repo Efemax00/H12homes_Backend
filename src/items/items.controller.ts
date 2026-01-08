@@ -41,6 +41,13 @@ export class ItemsController {
     return this.itemsService.getItemById(id);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @Get('admin/all')
+  getAllItemsWithAdmin() {
+    return this.itemsService.getAllItemsWithAdmin();
+  }
+
   // ============================
   // USER ROUTES (AUTH REQUIRED)
   // ============================
@@ -59,12 +66,19 @@ export class ItemsController {
     }
 
     // ✅ ADDED - Validate file types
-    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+    const allowedMimeTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/jpg',
+      'image/webp',
+    ];
     for (const file of files) {
       if (!allowedMimeTypes.includes(file.mimetype)) {
-        throw new BadRequestException('Only JPEG, PNG, and WebP images are allowed');
+        throw new BadRequestException(
+          'Only JPEG, PNG, and WebP images are allowed',
+        );
       }
-      
+
       // ✅ ADDED - Validate file size (max 5MB per image)
       const maxSize = 5 * 1024 * 1024;
       if (file.size > maxSize) {

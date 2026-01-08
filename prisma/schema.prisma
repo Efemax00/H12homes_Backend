@@ -39,6 +39,8 @@ model User {
 
   items      Item[]
 
+  itemsCreated Item[] @relation("ItemCreatedBy")
+
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
@@ -74,6 +76,9 @@ model Item {
   bathrooms      Int?       // 1, 2, 3, etc. (will display as "1 bathroom", "2 bathrooms")
   sqft           Float?     // Square footage
   propertyType   String?    // "Duplex", "Apartment", "Flat", "Detached", etc.
+
+  createdBy      String?    @db.Uuid
+  createdByUser  User?      @relation("ItemCreatedBy", fields: [createdBy], references: [id])
 
   images         ItemImage[]
 
