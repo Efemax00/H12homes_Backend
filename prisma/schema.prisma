@@ -73,10 +73,15 @@ model Item {
   status         ItemStatus @default(PENDING)
   isFeatured     Boolean    @default(false)
 
-  bedrooms       Int?       // 1, 2, 3, etc. (will display as "1 bedroom", "2 bedrooms")
-  bathrooms      Int?       // 1, 2, 3, etc. (will display as "1 bathroom", "2 bathrooms")
-  sqft           Float?     // Square footage
-  propertyType   String?    // "Duplex", "Apartment", "Flat", "Detached", etc.
+  
+  category       ItemCategory @default(FOR_SALE)
+
+   itemType      ItemType @default(HOUSE)
+
+  bedrooms       Int?       
+  bathrooms      Int?       
+  sqft           Float?     
+  propertyType   String?    
 
   createdBy      String?    @db.Uuid
   createdByUser  User?      @relation("ItemCreatedBy", fields: [createdBy], references: [id])
@@ -105,5 +110,17 @@ enum ItemStatus {
   SOLD
   REJECTED
 }
+
+enum ItemCategory {
+  FOR_SALE        
+  FOR_RENT        
+  SHORT_STAY      
+}
+
+enum ItemType {
+  HOUSE           
+  HOUSEHOLD_ITEM  
+}
+
 
 

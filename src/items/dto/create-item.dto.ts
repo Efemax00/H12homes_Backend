@@ -1,8 +1,9 @@
-import { IsString, IsNumber, IsOptional, IsEnum, Min, IsBoolean, IsInt } from 'class-validator';
-import { ItemStatus } from '@prisma/client';
+import { IsString, IsNumber, IsOptional, IsEnum,  Min, IsBoolean, IsInt, IsNotEmpty } from 'class-validator';
+import { ItemStatus, ItemCategory, ItemType } from '@prisma/client';
 
 export class CreateItemDto {
   @IsString()
+  @IsNotEmpty()
   title: string;
 
   @IsString()
@@ -37,6 +38,13 @@ export class CreateItemDto {
   @IsOptional()
   @IsBoolean()
   isFeatured?: boolean;
+
+  @IsEnum(ItemCategory)
+  category: ItemCategory;
+
+
+  @IsEnum(ItemType)
+  itemType: ItemType;
 
   // New fields
   @IsOptional()
