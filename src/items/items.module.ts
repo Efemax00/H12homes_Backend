@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import { ItemsService } from './items.service';
 import { ItemsController } from './items.controller';
-import { PrismaModule } from '../../prisma/prisma.module'; // ✅ ADDED
-import { CloudinaryModule } from '../cloudinary/cloudinary.module'; // ✅ ADDED
+import { PrismaModule } from '../../prisma/prisma.module'; 
+import { CloudinaryModule } from '../cloudinary/cloudinary.module'; 
 
 @Module({
-  imports: [PrismaModule, CloudinaryModule], // ✅ ADDED - Import both modules
+  imports: [PrismaModule, CloudinaryModule, JwtModule],
   controllers: [ItemsController],
   providers: [ItemsService],
 })
