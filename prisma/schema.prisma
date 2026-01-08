@@ -57,6 +57,7 @@ enum Role {
   USER
   SELLER
   ADMIN
+  SUPER_ADMIN
 }
 
 model Item {

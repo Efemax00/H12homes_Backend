@@ -3,11 +3,13 @@ import { Controller, Get, Patch, Param, Body, Post, Delete, UseGuards } from '@n
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
+import { SuperAdminGuard } from '../auth/super-admin.guard';
 import { Role } from '@prisma/client';
 
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('admin')
 export class AdminController {
+  prisma: any;
   constructor(private adminService: AdminService) {}
 
   // Get all users
@@ -18,12 +20,14 @@ export class AdminController {
 
   // Update user role
   @Patch('users/:id/role')
-  async updateUserRole(
-    @Param('id') userId: string,
-    @Body('role') role: Role,
-  ) {
-    return this.adminService.updateUserRole(userId, role);
-  }
+  @UseGuards(SuperAdminGuard)
+  async updateUserRole(userId: string, role: Role) {
+  return this.prisma.user.update({
+    where: { id: userId },
+    data: { role },
+  });
+}
+
 
   // Featured items
   @Post('items/:id/feature')
