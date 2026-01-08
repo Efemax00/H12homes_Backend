@@ -14,7 +14,7 @@ export class AdminGuard implements CanActivate {
       throw new ForbiddenException('No user found');
     }
 
-    if (user.role !== 'ADMIN') {
+    if (user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN') {
       throw new ForbiddenException('Access denied. Admins only.');
     }
 
