@@ -20,6 +20,7 @@ async function bootstrap() {
     'https://admin.h12homes.shop',
     'https://admin.h12homes.web.app',
     'https://h12homes.com',
+    'https://h12homes-admin.web.app',
   ],
   credentials: true,
 });
