@@ -80,18 +80,25 @@ export class ItemsService {
   // ======================
 
   async createItem(dto: CreateItemDto, userId: string, files: Express.Multer.File[]) {
+  console.log('📝 Creating item with dto:', dto);
+  console.log('📝 User ID:', userId);
+  console.log('📝 Files count:', files.length);
+  
   const imageUrls: string[] = [];
   
   for (const file of files) {
     const url = await this.cloudinaryService.uploadPropertyImage(file);
+    console.log('📸 Uploaded image:', url);
     imageUrls.push(url);
   }
 
-  return this.prisma.item.create({
+  console.log('📸 All image URLs:', imageUrls);
+
+  const item = await this.prisma.item.create({
     data: {
       ...dto,
       ownerId: userId,
-      createdBy: userId, // ✅ Track creator
+      createdBy: userId,
       status: ItemStatus.PENDING,
       isFeatured: false,
       images: {
@@ -103,7 +110,7 @@ export class ItemsService {
     },
     include: {
       images: true,
-      createdByUser: { // ✅ Include creator info
+      createdByUser: {
         select: {
           id: true,
           firstName: true,
@@ -114,6 +121,9 @@ export class ItemsService {
       },
     },
   });
+
+  console.log('✅ Item created successfully:', item.id);
+  return item;
 }
 
   async updateOwnItem(itemId: string, dto: UpdateItemDto, userId: string) {
