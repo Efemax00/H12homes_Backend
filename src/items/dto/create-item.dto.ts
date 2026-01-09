@@ -1,5 +1,6 @@
 import { IsString, IsNumber, IsOptional, IsEnum,  Min, IsBoolean, IsInt, IsNotEmpty } from 'class-validator';
 import { ItemStatus, ItemCategory, ItemType } from '@prisma/client';
+import { Transform } from 'class-transformer'; 
 
 export class CreateItemDto {
   @IsString()
@@ -20,8 +21,8 @@ export class CreateItemDto {
   @IsString()
   donts?: string;
 
+  @Transform(({ value }) => parseFloat(value))  
   @IsNumber()
-  @Min(0)
   price: number;
 
   @IsString()
@@ -47,19 +48,19 @@ export class CreateItemDto {
   itemType: ItemType;
 
   // New fields
+  @Transform(({ value }) => value ? parseInt(value) : undefined)  
+  @IsNumber()
   @IsOptional()
-  @IsInt()
-  @Min(1)
   bedrooms?: number;
 
+  @Transform(({ value }) => value ? parseInt(value) : undefined)  
+  @IsNumber()
   @IsOptional()
-  @IsInt()
-  @Min(1)
   bathrooms?: number;
 
-  @IsOptional()
+  @Transform(({ value }) => value ? parseFloat(value) : undefined)  
   @IsNumber()
-  @Min(0)
+  @IsOptional()
   sqft?: number;
 
   @IsOptional()
