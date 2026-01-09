@@ -10,6 +10,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       secretOrKey: process.env.PASSWORD_SECRET || 'you fucking thief lol hahaha', // Keep in your house
     });
+    console.log('🔑 JWT Strategy initialized with secret:', process.env.PASSWORD_SECRET ? 'SECRET EXISTS' : 'NO SECRET');
   }
 
   async validate(payload: any) {
