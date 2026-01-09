@@ -14,7 +14,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
-    // Add payload to req.user
-    return { id: payload.sub,  role: payload.role };
+    console.log('✅ JWT validate called with payload:', payload); 
+    const user = { id: payload.sub, role: payload.role };
+    console.log('✅ Returning user:', user); 
+    return user;
   }
 }
