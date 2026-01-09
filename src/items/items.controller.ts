@@ -119,7 +119,16 @@ export class ItemsController {
       }
     }
 
-    return this.itemsService.createItem(dto, req.user.id, files);
+    const processedDto = {
+    ...dto,
+    price: parseFloat(dto.price as any),
+    bedrooms: dto.bedrooms ? parseInt(dto.bedrooms as any) : undefined,
+    bathrooms: dto.bathrooms ? parseInt(dto.bathrooms as any) : undefined,
+    sqft: dto.sqft ? parseFloat(dto.sqft as any) : undefined,
+  };
+
+
+    return this.itemsService.createItem(processedDto, req.user.id, files);
   }
 
   @UseGuards(JwtAuthGuard)
