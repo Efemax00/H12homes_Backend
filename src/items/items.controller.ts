@@ -94,6 +94,8 @@ export class ItemsController {
     @Req() req,
     @UploadedFiles() files: Express.Multer.File[],
   ) {
+    console.log('🔍 req.user:', req.user);
+    console.log('🔍 req.user.id:', req.user.id);
     if (!files || files.length === 0) {
       throw new BadRequestException('At least one image is required');
     }
