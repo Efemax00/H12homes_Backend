@@ -81,10 +81,19 @@ model Item {
   bedrooms       Int?       
   bathrooms      Int?       
   sqft           Float?     
-  propertyType   String?    
+  propertyType   String?  
+
+  isDeleted      Boolean    @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?    @db.Uuid
+  deletionReason String?  
 
   createdBy      String?    @db.Uuid
   createdByUser  User?      @relation("ItemCreatedBy", fields: [createdBy], references: [id])
+
+  
+  @@index([isDeleted])
+
 
   images         ItemImage[]
 

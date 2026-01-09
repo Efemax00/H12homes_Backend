@@ -11,6 +11,7 @@ import {
   UseInterceptors,
   UploadedFiles,
   BadRequestException,
+  Query,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { ItemsService } from './items.service';
@@ -19,7 +20,7 @@ import { UpdateItemDto } from './dto/update-item.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
-import { Role } from '@prisma/client';
+import { Role, ItemStatus } from '@prisma/client'; // ✅ ADDED ItemStatus
 
 @Controller('items')
 export class ItemsController {
@@ -45,6 +46,30 @@ export class ItemsController {
     return this.itemsService.getAllItemsWithAdmin();
   }
 
+  // ✅ NEW - Get items by status
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @Get('admin/status/:status')
+  getItemsByStatus(@Param('status') status: ItemStatus) {
+    return this.itemsService.getItemsByStatus(status);
+  }
+
+  // ✅ NEW - Get unfeatured items
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @Get('admin/unfeatured')
+  getUnfeaturedItems() {
+    return this.itemsService.getUnfeaturedItems();
+  }
+
+  // ✅ NEW - Get deleted items (SUPER_ADMIN only)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @Get('admin/deleted')
+  getDeletedItems() {
+    return this.itemsService.getDeletedItems();
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
   @Patch('admin/:id')
@@ -52,11 +77,32 @@ export class ItemsController {
     return this.itemsService.adminUpdateItem(id, dto);
   }
 
+  // ✅ UPDATED - Soft delete with reason
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
   @Delete('admin/:id')
-  adminDelete(@Param('id') id: string) {
-    return this.itemsService.adminDeleteItem(id);
+  adminDelete(
+    @Param('id') id: string,
+    @Req() req,
+    @Body('reason') reason?: string,
+  ) {
+    return this.itemsService.adminDeleteItem(id, req.user.id, reason);
+  }
+
+  // ✅ NEW - Restore deleted item (SUPER_ADMIN only)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @Patch('admin/:id/restore')
+  restoreItem(@Param('id') id: string) {
+    return this.itemsService.restoreItem(id);
+  }
+
+  // ✅ NEW - Permanent delete (SUPER_ADMIN only)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @Delete('admin/:id/permanent')
+  permanentDeleteItem(@Param('id') id: string) {
+    return this.itemsService.permanentDeleteItem(id);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -120,13 +166,12 @@ export class ItemsController {
     }
 
     const processedDto = {
-    ...dto,
-    price: parseFloat(dto.price as any),
-    bedrooms: dto.bedrooms ? parseInt(dto.bedrooms as any) : undefined,
-    bathrooms: dto.bathrooms ? parseInt(dto.bathrooms as any) : undefined,
-    sqft: dto.sqft ? parseFloat(dto.sqft as any) : undefined,
-  };
-
+      ...dto,
+      price: parseFloat(dto.price as any),
+      bedrooms: dto.bedrooms ? parseInt(dto.bedrooms as any) : undefined,
+      bathrooms: dto.bathrooms ? parseInt(dto.bathrooms as any) : undefined,
+      sqft: dto.sqft ? parseFloat(dto.sqft as any) : undefined,
+    };
 
     return this.itemsService.createItem(processedDto, req.user.id, files);
   }
