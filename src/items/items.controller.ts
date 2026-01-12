@@ -123,6 +123,12 @@ export class ItemsController {
   // PUBLIC ROUTE - :id MUST BE AFTER admin/* routes
   // ============================
 
+  @Get('search')
+searchItems(@Query('q') query: string, @Query('category') category?: string, @Query('type') type?: string) {
+  return this.itemsService.searchItems(query, category, type);
+}
+
+
   @Get(':id')
   getOne(@Param('id') id: string) {
     return this.itemsService.getItemById(id);
@@ -181,9 +187,4 @@ export class ItemsController {
   updateOwn(@Param('id') id: string, @Body() dto: UpdateItemDto, @Req() req) {
     return this.itemsService.updateOwnItem(id, dto, req.user.id);
   }
-
-  @Get('search')
-searchItems(@Query('q') query: string, @Query('category') category?: string, @Query('type') type?: string) {
-  return this.itemsService.searchItems(query, category, type);
-}
 }
