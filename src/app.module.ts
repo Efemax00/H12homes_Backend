@@ -9,6 +9,7 @@ import { UserModule } from './user/user.module';
 import { AdminModule } from './admin/admin.module';
 import { ItemsModule } from './items/items.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { PrismaModule } from '../prisma/prisma.module';
     UserModule,
     AdminModule,
     ItemsModule,
+    ChatModule,
   ],
   controllers: [AppController],
   providers: [
