@@ -18,44 +18,43 @@ export class ItemsService {
 
   // Homepage / Listing (featured first) - EXCLUDE DELETED
   async getPublicItems() {
-    const items = await this.prisma.item.findMany({
-      where: { 
-        status: ItemStatus.AVAILABLE,
-        isDeleted: false, // ✅ ADDED - Exclude deleted items
+  return this.prisma.item.findMany({
+    where: { 
+      status: ItemStatus.AVAILABLE,
+      isDeleted: false,
+    },
+    include: { 
+      images: true,
+      createdByUser: {
+        select: {
+          phone: true,
+        },
       },
-      include: { images: true },
-      orderBy: [
-        { isFeatured: 'desc' },
-        { createdAt: 'desc' },
-      ],
-    });
-
-    return items.map(item => this.mapItemToCompanyOwnership(item));
-  }
+    },
+    orderBy: [
+      { isFeatured: 'desc' },
+      { createdAt: 'desc' },
+    ],
+  });
+}
 
   // Item details page (even SOLD) - EXCLUDE DELETED
   async getItemById(id: string) {
-    const item = await this.prisma.item.findUnique({
-      where: { id },
-      include: { images: true },
-    });
-
-    if (!item || item.isDeleted) return null; // ✅ ADDED - Return null if deleted
-
-    return this.mapItemToCompanyOwnership(item);
-  }
-
-  // Helper to replace user info with company info
-  private mapItemToCompanyOwnership(item: any) {
-    return {
-      ...item,
-      owner: {
-        name: 'H12Homes',
-        phone: '0800000000',
-        email: 'contact@h12homes.com',
+  const item = await this.prisma.item.findUnique({
+    where: { id },
+    include: { 
+      images: true,
+      createdByUser: {
+        select: {
+          phone: true,
+        },
       },
-    };
-  }
+    },
+  });
+
+  if (!item || item.isDeleted) return null;
+  return item;
+}
 
   // ✅ UPDATED - Exclude deleted items by default
   async getAllItemsWithAdmin() {
@@ -69,6 +68,7 @@ export class ItemsService {
             firstName: true,
             lastName: true,
             email: true,
+            phone: true,
             avatarUrl: true,
           },
         },
