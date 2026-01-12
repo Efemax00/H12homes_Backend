@@ -23,7 +23,7 @@ export class UserController {
   @UseGuards(JwtAuthGuard)
   @Get('profile')
   async getProfile(@Req() req: any) {
-    const user = await this.userService.findById(req.user.sub);
+    const user = await this.userService.findById(req.user.id);
     if (!user) return null;
 
     const { password, ...safeUser } = user;
@@ -54,7 +54,7 @@ export class UserController {
       throw new BadRequestException('File size must be less than 5MB');
     }
 
-    const userId = req.user.sub;
+    const userId = req.user.id;
 
     // Get user's current avatar
     const user = await this.userService.findById(userId);
