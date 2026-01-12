@@ -1,7 +1,7 @@
 // src/admin/admin.service.ts
-import { Injectable, ForbiddenException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Role, User } from '@prisma/client';
+import { Role } from '@prisma/client';
 
 @Injectable()
 export class AdminService {
@@ -9,24 +9,42 @@ export class AdminService {
 
   // Get all users
   async getAllUsers() {
-    return this.prisma.user.findMany();
+    return this.prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        middleName: true,
+        lastName: true,
+        phone: true,
+        location: true,
+        role: true,
+        avatarUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        isEmailVerified: true,
+        // Don't return password
+      }
+    });
   }
 
   /**
    * Update a user's role
-   * Only SUPER_ADMIN can do this
+   * Only SUPER_ADMIN can do this (enforced by guard)
    * @param userId - ID of the user to update
    * @param role - new role
-   * @param currentUser - the user making this request
    */
-  async updateUserRole(userId: string, role: Role, currentUser: User) {
-    if (currentUser.role !== 'SUPER_ADMIN') {
-      throw new ForbiddenException('Only SUPER_ADMIN can change roles');
-    }
-
+  async updateUserRole(userId: string, role: Role) {
     return this.prisma.user.update({
       where: { id: userId },
       data: { role },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+      }
     });
   }
 
@@ -50,6 +68,9 @@ export class AdminService {
   async getFeaturedItems() {
     return this.prisma.item.findMany({
       where: { isFeatured: true },
+      include: {
+        images: true,
+      }
     });
   }
 }

@@ -2,41 +2,43 @@
 import { Controller, Get, Patch, Param, Body, Post, Delete, UseGuards } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { AdminGuard } from '../auth/admin.guard';
-import { SuperAdminGuard } from '../auth/super-admin.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 import { Role } from '@prisma/client';
 
-@UseGuards(JwtAuthGuard, AdminGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('admin')
 export class AdminController {
-  prisma: any;
   constructor(private adminService: AdminService) {}
 
-  // Get all users
+  // Get all users (ADMIN and SUPER_ADMIN can access)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('users')
   async getUsers() {
     return this.adminService.getAllUsers();
   }
 
-  // Update user role
+  // Update user role (SUPER_ADMIN only)
+  @Roles(Role.SUPER_ADMIN)
   @Patch('users/:id/role')
-  @UseGuards(SuperAdminGuard)
-  async updateUserRole(userId: string, role: Role) {
-  return this.prisma.user.update({
-    where: { id: userId },
-    data: { role },
-  });
-}
+  async updateUserRole(
+    @Param('id') userId: string,
+    @Body('role') role: Role
+  ) {
+    return this.adminService.updateUserRole(userId, role);
+  }
 
-
-  // Featured items
+  // Feature item (ADMIN and SUPER_ADMIN can access)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post('items/:id/feature')
-featureItem(@Param('id') id: string) {
-  return this.adminService.featureItem(id);
-}
+  featureItem(@Param('id') id: string) {
+    return this.adminService.featureItem(id);
+  }
 
-@Patch('items/:id/unfeature')
-unfeatureItem(@Param('id') id: string) {
-  return this.adminService.unfeatureItem(id);
-}
+  // Unfeature item (ADMIN and SUPER_ADMIN can access)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Patch('items/:id/unfeature')
+  unfeatureItem(@Param('id') id: string) {
+    return this.adminService.unfeatureItem(id);
+  }
 }

@@ -7,8 +7,12 @@ export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    // Get roles set on route
-    const requiredRoles = this.reflector.get<Role[]>('roles', context.getHandler());
+    // Get roles from both handler (method) and class (controller)
+    const requiredRoles = this.reflector.getAllAndOverride<Role[]>('roles', [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
     if (!requiredRoles || requiredRoles.length === 0) {
       return true; // no role restriction
     }
@@ -17,7 +21,7 @@ export class RolesGuard implements CanActivate {
     const user = request.user; // comes from JwtAuthGuard
 
     if (!user || !requiredRoles.includes(user.role)) {
-      throw new ForbiddenException('You do not have permission (role) to access this resource');
+      throw new ForbiddenException('You do not have permission to access this resource');
     }
 
     return true;
