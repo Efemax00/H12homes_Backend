@@ -40,7 +40,7 @@ export class ItemsController {
   // ============================
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('admin/all')
   getAllItemsWithAdmin() {
     return this.itemsService.getAllItemsWithAdmin();
@@ -48,7 +48,7 @@ export class ItemsController {
 
   // ✅ NEW - Get items by status
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('admin/status/:status')
   getItemsByStatus(@Param('status') status: ItemStatus) {
     return this.itemsService.getItemsByStatus(status);
@@ -56,7 +56,7 @@ export class ItemsController {
 
   // ✅ NEW - Get unfeatured items
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('admin/unfeatured')
   getUnfeaturedItems() {
     return this.itemsService.getUnfeaturedItems();
@@ -71,7 +71,7 @@ export class ItemsController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch('admin/:id')
   adminUpdate(@Param('id') id: string, @Body() dto: UpdateItemDto) {
     return this.itemsService.adminUpdateItem(id, dto);
@@ -79,7 +79,7 @@ export class ItemsController {
 
   // ✅ UPDATED - Soft delete with reason
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete('admin/:id')
   adminDelete(
     @Param('id') id: string,
@@ -106,14 +106,14 @@ export class ItemsController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch('admin/:id/feature')
   adminFeature(@Param('id') id: string) {
     return this.itemsService.adminFeatureItem(id);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch('admin/:id/unfeature')
   adminUnfeature(@Param('id') id: string) {
     return this.itemsService.adminUnfeatureItem(id);
