@@ -124,8 +124,22 @@ export class ItemsController {
   // ============================
 
   @Get('search')
-searchItems(@Query('q') query: string, @Query('category') category?: string, @Query('type') type?: string) {
-  return this.itemsService.searchItems(query, category, type);
+searchItems(
+  @Query('q') query?: string,
+  @Query('category') category?: string,
+  @Query('type') itemType?: string,
+  @Query('minPrice') minPrice?: string,
+  @Query('maxPrice') maxPrice?: string,
+  @Query('location') location?: string,
+) {
+  return this.itemsService.searchItems(
+    query,
+    category,
+    itemType,
+    minPrice ? parseFloat(minPrice) : undefined,
+    maxPrice ? parseFloat(maxPrice) : undefined,
+    location,
+  );
 }
 
 

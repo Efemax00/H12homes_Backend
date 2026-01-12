@@ -222,19 +222,45 @@ export class ItemsService {
     return this.prisma.item.update({ where: { id: itemId }, data: dto });
   }
 
-  async searchItems(searchQuery: string, category?: string, itemType?: string) {
+  async searchItems(
+  searchQuery?: string,
+  category?: string,
+  itemType?: string,
+  minPrice?: number,
+  maxPrice?: number,
+  location?: string
+) {
   const where: any = {
     status: ItemStatus.AVAILABLE,
     isDeleted: false,
-    OR: [
+  };
+
+  // Text search
+  if (searchQuery && searchQuery.trim()) {
+    where.OR = [
       { title: { contains: searchQuery, mode: 'insensitive' } },
       { shortDesc: { contains: searchQuery, mode: 'insensitive' } },
       { location: { contains: searchQuery, mode: 'insensitive' } },
-    ],
-  };
+    ];
+  }
 
+  // Location filter
+  if (location && location.trim()) {
+    where.location = { contains: location, mode: 'insensitive' };
+  }
+
+  // Category filter
   if (category) where.category = category;
+
+  // Item type filter
   if (itemType) where.itemType = itemType;
+
+  // Price range filter
+  if (minPrice !== undefined || maxPrice !== undefined) {
+    where.price = {};
+    if (minPrice !== undefined) where.price.gte = minPrice;
+    if (maxPrice !== undefined) where.price.lte = maxPrice;
+  }
 
   return this.prisma.item.findMany({
     where,
