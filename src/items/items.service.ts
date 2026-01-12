@@ -222,6 +222,27 @@ export class ItemsService {
     return this.prisma.item.update({ where: { id: itemId }, data: dto });
   }
 
+  async searchItems(searchQuery: string, category?: string, itemType?: string) {
+  const where: any = {
+    status: ItemStatus.AVAILABLE,
+    isDeleted: false,
+    OR: [
+      { title: { contains: searchQuery, mode: 'insensitive' } },
+      { shortDesc: { contains: searchQuery, mode: 'insensitive' } },
+      { location: { contains: searchQuery, mode: 'insensitive' } },
+    ],
+  };
+
+  if (category) where.category = category;
+  if (itemType) where.itemType = itemType;
+
+  return this.prisma.item.findMany({
+    where,
+    include: { images: true },
+    orderBy: [{ isFeatured: 'desc' }, { createdAt: 'desc' }],
+  });
+}
+
   // ======================
   // ADMIN ROUTES
   // ======================
