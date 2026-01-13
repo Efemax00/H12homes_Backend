@@ -32,6 +32,16 @@ export class MessagesController {
     return this.messagesService.expressInterest(req.user.id, propertyId);
   }
 
+   /**
+   * Get logged-in user's conversations (buyer/user side)
+   * GET /messages/my-user-conversations
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get('my-user-conversations')
+  async getMyUserConversations(@Req() req) {
+    return this.messagesService.getUserConversations(req.user.id);
+  }
+
   /**
    * Get all interested users for a property (Admin only)
    * GET /messages/property/:propertyId/interests

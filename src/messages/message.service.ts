@@ -164,6 +164,15 @@ export class MessagesService {
     return conversationsWithMessages;
   }
 
+    /**
+   * Get user's conversations (wrapper for getUserInterests)
+   * Used by the frontend "messages" / header for logged-in users
+   */
+  async getUserConversations(userId: string) {
+    return this.getUserInterests(userId);
+  }
+
+
   // ==================== CHAT MESSAGES ====================
 
   /**
