@@ -235,40 +235,82 @@ export class MessagesService {
   /**
    * Get all conversations for an admin (their properties only)
    */
-  async getAdminConversations(adminId: string) {
-    // Get all properties created by this admin
+   async getAdminConversations(adminId: string) {
+    // 1. Get property IDs created by this admin
     const properties = await this.prisma.item.findMany({
       where: { createdBy: adminId },
-      select: { id: true },
+      select: { id: true, title: true, price: true, images: true },
     });
+
+    if (!properties.length) {
+      return [];
+    }
 
     const propertyIds = properties.map((p) => p.id);
 
-    // Get latest message for each property that has messages
-    const conversations = await this.prisma.$queryRaw`
-      SELECT DISTINCT ON (cm.property_id)
-        cm.property_id,
-        i.title as property_title,
-        i.price,
-        i.images,
-        cm.message as last_message,
-        cm.created_at as last_message_at,
-        u.id as buyer_id,
-        u.first_name as buyer_first_name,
-        u.last_name as buyer_last_name,
-        u.avatar_url as buyer_avatar,
-        COUNT(CASE WHEN cm.receiver_id = ${adminId} AND cm.is_read = false THEN 1 END) as unread_count
-      FROM chat_messages cm
-      JOIN items i ON cm.property_id = i.id
-      JOIN users u ON cm.sender_id = u.id
-      WHERE cm.property_id = ANY(${propertyIds}::uuid[])
-        AND cm.receiver_id = ${adminId}
-      GROUP BY cm.property_id, i.title, i.price, i.images, cm.message, cm.created_at, u.id, u.first_name, u.last_name, u.avatar_url
-      ORDER BY cm.property_id, cm.created_at DESC
-    `;
+    // 2. Get all messages for those properties where admin is involved
+    const messages = await this.prisma.chatMessage.findMany({
+      where: {
+        propertyId: { in: propertyIds },
+        // admin is either sender or receiver
+        OR: [{ senderId: adminId }, { receiverId: adminId }],
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' }, // latest first
+    });
 
-    return conversations;
+    // 3. Group messages by propertyId and compute unread_count + latest message
+    const propertyMap = new Map<string, any>();
+
+    for (const msg of messages) {
+      const existing = propertyMap.get(msg.propertyId);
+
+      // Compute unread for this property (for the admin)
+      const isUnreadForAdmin = msg.receiverId === adminId && !msg.isRead;
+
+      if (!existing) {
+        // First time we see this property: init conversation
+        const prop = properties.find((p) => p.id === msg.propertyId);
+
+        propertyMap.set(msg.propertyId, {
+          propertyId: msg.propertyId,
+          propertyTitle: prop?.title ?? null,
+          price: prop?.price ?? null,
+          images: prop?.images ?? [],
+          lastMessage: msg.message,
+          lastMessageAt: msg.createdAt,
+          buyerId: msg.senderId === adminId ? msg.receiverId : msg.senderId,
+          buyerFirstName:
+            msg.senderId === adminId ? null : msg.sender?.firstName ?? null,
+          buyerLastName:
+            msg.senderId === adminId ? null : msg.sender?.lastName ?? null,
+          buyerAvatar:
+            msg.senderId === adminId ? null : msg.sender?.avatarUrl ?? null,
+          unreadCount: isUnreadForAdmin ? 1 : 0,
+        });
+      } else {
+        // We already have a conversation; just bump unread count if needed
+        if (isUnreadForAdmin) {
+          existing.unreadCount += 1;
+        }
+
+        // No need to update lastMessage because messages are sorted desc,
+        // so the first one we saw was already the latest.
+      }
+    }
+
+    return Array.from(propertyMap.values());
   }
+
 
   /**
    * Get all conversations platform-wide (SUPER_ADMIN only)
