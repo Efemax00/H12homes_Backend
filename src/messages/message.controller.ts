@@ -43,6 +43,16 @@ export class MessagesController {
     return this.messagesService.getPropertyInterests(propertyId, req.user.id);
   }
 
+  /**
+   * Get user's own interests (properties they inquired about)
+   * GET /messages/my-interests
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get('my-interests')
+  async getMyInterests(@Req() req) {
+    return this.messagesService.getUserInterests(req.user.id);
+  }
+
   // ==================== CHAT ENDPOINTS ====================
 
   /**

@@ -107,6 +107,63 @@ export class MessagesService {
     });
   }
 
+  /**
+   * Get user's interests (properties they inquired about)
+   */
+  async getUserInterests(userId: string) {
+    const interests = await this.prisma.propertyInterest.findMany({
+      where: { userId },
+      include: {
+        property: {
+          select: {
+            id: true,
+            title: true,
+            price: true,
+            status: true,
+            images: true,
+            location: true,
+          },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    // Get last message and unread count for each conversation
+    const conversationsWithMessages = await Promise.all(
+      interests.map(async (interest) => {
+        const lastMessage = await this.prisma.chatMessage.findFirst({
+          where: { propertyId: interest.propertyId },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            message: true,
+            createdAt: true,
+          },
+        });
+
+        const unreadCount = await this.prisma.chatMessage.count({
+          where: {
+            propertyId: interest.propertyId,
+            receiverId: userId,
+            isRead: false,
+          },
+        });
+
+        return {
+          propertyId: interest.propertyId,
+          status: interest.status,
+          createdAt: interest.createdAt,
+          updatedAt: interest.updatedAt,
+          property: interest.property,
+          lastMessage: lastMessage?.message || null,
+          lastMessageAt: lastMessage?.createdAt || interest.createdAt,
+          unreadCount,
+        };
+      })
+    );
+
+    return conversationsWithMessages;
+  }
+
   // ==================== CHAT MESSAGES ====================
 
   /**
