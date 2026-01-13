@@ -70,23 +70,25 @@ export class MessagesController {
    * POST /messages/send
    */
   @UseGuards(JwtAuthGuard)
-@Post('send')
-async sendMessage(
-  @Req() req,
-  @Body() body: any,  // ✅ Change to 'any' temporarily to see raw data
-) {
-  console.log('🔍 RAW BODY:', body);
-  console.log('🔍 propertyId:', body.propertyId);
-  console.log('🔍 message:', body.message);
-  
-  return this.messagesService.sendMessage(
-    req.user.id,
-    body.propertyId,
-    body.message,
-    body.messageType,
-    body.attachmentUrl,
-  );
-}
+  @Post('send')
+  async sendMessage(
+    @Req() req,
+    @Body()
+    body: {
+      propertyId: string;
+      message: string;
+      messageType?: MessageType;
+      attachmentUrl?: string;
+    },
+  ) {
+    return this.messagesService.sendMessage(
+      req.user.id,
+      body.propertyId,
+      body.message,
+      body.messageType,
+      body.attachmentUrl,
+    );
+  }
 
   /**
    * Get chat history for a property
