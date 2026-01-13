@@ -35,7 +35,16 @@ model User {
   accountLockedUntil  DateTime?
   refreshTokens       RefreshToken[]
   lastLoginAttempt    DateTime?
-  
+
+  interests        PropertyInterest[]    @relation("UserInterests")
+  sentMessages     ChatMessage[]         @relation("SentMessages")
+  receivedMessages ChatMessage[]         @relation("ReceivedMessages")
+  purchases        Sale[]                @relation("Purchases")
+  sales            Sale[]                @relation("Sales")
+  auditLogs        AuditLog[]            @relation("UserAuditLogs")
+  propertyViews    PropertyView[]        @relation("UserPropertyViews")
+  engagements      PropertyEngagement[]  @relation("UserEngagements")
+
 
   items      Item[]
 
@@ -83,6 +92,19 @@ model Item {
   sqft           Float?     
   propertyType   String?  
 
+   viewCount            Int      @default(0)
+  uniqueViewCount      Int      @default(0)
+  interestedCount      Int      @default(0)
+  whatsappClickCount   Int      @default(0)
+  lastViewedAt         DateTime?
+
+  interests   PropertyInterest[]    @relation("PropertyInterests")
+  messages    ChatMessage[]         @relation("PropertyMessages")
+  sales       Sale[]                @relation("PropertySales")
+  views       PropertyView[]        @relation("PropertyViews")
+  engagements PropertyEngagement[]  @relation("PropertyEngagements")
+
+
   isDeleted      Boolean    @default(false)
   deletedAt      DateTime?
   deletedBy      String?    @db.Uuid
@@ -129,6 +151,170 @@ enum ItemCategory {
 enum ItemType {
   HOUSE           
   HOUSEHOLD_ITEM  
+}
+
+model PropertyView {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @db.Uuid
+  userId     String?  @db.Uuid // Null if not logged in
+  ipAddress  String?  // Track anonymous users
+  userAgent  String?  // Device/browser info
+  referrer   String?  // Where they came from
+  sessionId  String?  // Group views in same session
+  viewedAt   DateTime @default(now())
+
+  // Relations
+  property   Item     @relation("PropertyViews", fields: [propertyId], references: [id], onDelete: Cascade)
+  user       User?    @relation("UserPropertyViews", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([propertyId])
+  @@index([userId])
+  @@index([ipAddress])
+  @@index([viewedAt])
+  @@map("property_views")
+}
+
+model PropertyEngagement {
+  id           String         @id @default(uuid()) @db.Uuid
+  propertyId   String         @db.Uuid
+  userId       String?        @db.Uuid
+  actionType   EngagementType
+  metadata     Json?          // Extra context per action type
+  createdAt    DateTime       @default(now())
+
+  // Relations
+  property     Item           @relation("PropertyEngagements", fields: [propertyId], references: [id], onDelete: Cascade)
+  user         User?          @relation("UserEngagements", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([propertyId])
+  @@index([userId])
+  @@index([actionType])
+  @@index([createdAt])
+  @@map("property_engagements")
+}
+
+enum EngagementType {
+  CLICKED_INTERESTED    // Clicked "I'm Interested" button
+  OPENED_WHATSAPP       // Clicked WhatsApp contact
+  CLICKED_PHONE         // Clicked phone number
+  VIEWED_IMAGE          // Opened image gallery
+  SHARED_PROPERTY       // Shared via social media
+  BOOKMARKED            // Saved/favorited
+  CLICKED_DIRECTIONS    // Clicked map/directions
+  DOWNLOADED_BROCHURE   // Downloaded property info
+}
+
+// Add these enums
+enum InterestStatus {
+  ACTIVE
+  PURCHASED
+  CANCELLED
+  EXPIRED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  PAYMENT_PROOF
+  SYSTEM
+}
+
+enum SaleStatus {
+  PENDING
+  PAYMENT_SUBMITTED
+  CONFIRMED
+  DELIVERED
+  CANCELLED
+  DISPUTED
+}
+
+// Add these models
+model PropertyInterest {
+  id         String         @id @default(uuid()) @db.Uuid
+  propertyId String         @db.Uuid
+  userId     String         @db.Uuid
+  status     InterestStatus @default(ACTIVE)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  property Item @relation("PropertyInterests", fields: [propertyId], references: [id], onDelete: Cascade)
+  user     User @relation("UserInterests", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, userId])
+  @@index([propertyId])
+  @@index([userId])
+  @@index([status])
+  @@map("property_interests")
+}
+
+model ChatMessage {
+  id            String      @id @default(uuid()) @db.Uuid
+  propertyId    String      @db.Uuid
+  senderId      String      @db.Uuid
+  receiverId    String      @db.Uuid
+  message       String      @db.Text
+  messageType   MessageType @default(TEXT)
+  attachmentUrl String?
+  isRead        Boolean     @default(false)
+  readAt        DateTime?
+  createdAt     DateTime    @default(now())
+
+  property Item @relation("PropertyMessages", fields: [propertyId], references: [id], onDelete: Cascade)
+  sender   User @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId])
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([createdAt])
+  @@map("chat_messages")
+}
+
+model Sale {
+  id                 String     @id @default(uuid()) @db.Uuid
+  propertyId         String     @db.Uuid
+  buyerId            String     @db.Uuid
+  sellerId           String     @db.Uuid
+  amount             Float
+  paymentProofUrl    String?
+  companyAccountPaid Boolean    @default(false)
+  status             SaleStatus @default(PENDING)
+  markedSoldAt       DateTime?
+  deliveredAt        DateTime?
+  notes              String?    @db.Text
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  property Item @relation("PropertySales", fields: [propertyId], references: [id], onDelete: Cascade)
+  buyer    User @relation("Purchases", fields: [buyerId], references: [id], onDelete: Cascade)
+  seller   User @relation("Sales", fields: [sellerId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId])
+  @@index([buyerId])
+  @@index([sellerId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("sales")
+}
+
+model AuditLog {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String?   @db.Uuid
+  action     String
+  entityType String
+  entityId   String?   @db.Uuid
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+
+  user User? @relation("UserAuditLogs", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
 
 

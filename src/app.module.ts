@@ -10,6 +10,8 @@ import { AdminModule } from './admin/admin.module';
 import { ItemsModule } from './items/items.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ChatModule } from './chat/chat.module';
+import { MessagesModule } from './messages/message.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -40,6 +42,8 @@ import { ChatModule } from './chat/chat.module';
     AdminModule,
     ItemsModule,
     ChatModule,
+    MessagesModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [
