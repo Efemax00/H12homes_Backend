@@ -6,11 +6,17 @@ import { UserModule } from '../user/user.module';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtStrategy } from './jwt.strategy';
 
+
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret) {
+  throw new Error('❌ JWT_SECRET is not defined in environment variables');
+}
+
 @Module({
   imports: [
     forwardRef(() => UserModule),
     JwtModule.register({
-      secret: process.env.JWT_SECRET || 'supersecret',
+      secret: jwtSecret,
       signOptions: { expiresIn: '1d' },
     }),
   ],

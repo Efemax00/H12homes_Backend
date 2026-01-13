@@ -6,17 +6,22 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor() {
+    // Ensure JWT_SECRET exists
+    if (!process.env.JWT_SECRET) {
+      throw new Error('❌ JWT_SECRET is not defined in environment variables');
+    }
+
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-      secretOrKey: process.env.JWT_SECRET || 'you fucking thief lol hahaha', // Keep in your house
+      secretOrKey: process.env.JWT_SECRET,
     });
-    console.log('🔑 JWT Strategy initialized with secret:', process.env.JWT_SECRET ? 'SECRET EXISTS' : 'NO SECRET');
+
   }
 
   async validate(payload: any) {
-    console.log('✅ JWT validate called with payload:', payload); 
-    const user = { id: payload.sub, role: payload.role };
-    console.log('✅ Returning user:', user); 
-    return user;
+    return {
+      id: payload.sub,
+      role: payload.role,
+    };
   }
 }
