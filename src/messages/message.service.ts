@@ -1,7 +1,7 @@
 // src/messages/messages.service.ts
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { MessageType, InterestStatus } from '@prisma/client';
+import { MessageType, InterestStatus, ItemStatus, FinanceStatus, SaleStatus, PaymentMethod } from '@prisma/client';
 
 @Injectable()
 export class MessagesService {
@@ -14,55 +14,58 @@ export class MessagesService {
    * Creates interest record and audit log
    */
   async expressInterest(userId: string, propertyId: string) {
-    // Check if property exists
-    const property = await this.prisma.item.findUnique({
-      where: { id: propertyId },
-      include: { createdByUser: true },
-    });
+  // 1. Check if property exists
+  const property = await this.prisma.item.findUnique({
+    where: { id: propertyId },
+    include: { createdByUser: true },
+  });
 
-    if (!property) {
-      throw new NotFoundException('Property not found');
-    }
+  if (!property) {
+    throw new NotFoundException('Property not found');
+  }
 
-    // ✅ Prevent admin from expressing interest in their own property
-    if (property.createdBy === userId) {
-      throw new BadRequestException('Cannot express interest in your own property');
-    }
+  // Prevent admin from expressing interest in their own property
+  if (property.createdBy === userId) {
+    throw new BadRequestException('Cannot express interest in your own property');
+  }
 
-    // Create or update interest
-    const interest = await this.prisma.propertyInterest.upsert({
+  // 2. Check if interest already exists
+  const existingInterest = await this.prisma.propertyInterest.findUnique({
+    where: {
+      propertyId_userId: {
+        propertyId,
+        userId,
+      },
+    },
+  });
+
+  let interest;
+
+  if (existingInterest) {
+    // ♻️ Just reactivate / bump timestamp – NO new system messages
+    interest = await this.prisma.propertyInterest.update({
       where: {
         propertyId_userId: {
           propertyId,
           userId,
         },
       },
-      update: {
+      data: {
         status: InterestStatus.ACTIVE,
         updatedAt: new Date(),
       },
-      create: {
+    });
+  } else {
+    // ✨ First time: create interest
+    interest = await this.prisma.propertyInterest.create({
+      data: {
         propertyId,
         userId,
         status: InterestStatus.ACTIVE,
       },
     });
 
-    // Audit log
-    await this.prisma.auditLog.create({
-      data: {
-        userId,
-        action: 'CLICKED_INTERESTED',
-        entityType: 'PROPERTY',
-        entityId: propertyId,
-        metadata: {
-          propertyTitle: property.title,
-          sellerId: property.createdBy,
-        },
-      },
-    });
-
-    // Create system message in chat (only if property has an owner)
+    // 3a. Notify admin (only if property has an owner)
     if (property.createdBy) {
       await this.prisma.chatMessage.create({
         data: {
@@ -75,8 +78,57 @@ export class MessagesService {
       });
     }
 
-    return interest;
+    // 3b. Send payment details to user in the chat (optional but cool)
+    const {
+      COMPANY_BANK_NAME,
+      COMPANY_ACCOUNT_NAME,
+      COMPANY_ACCOUNT_NUMBER,
+      COMPANY_PAYMENT_INSTRUCTIONS,
+    } = process.env;
+
+    if (COMPANY_BANK_NAME && COMPANY_ACCOUNT_NAME && COMPANY_ACCOUNT_NUMBER) {
+      // Sender can be the admin (if exists) or the user themselves, but it's a SYSTEM message anyway
+      const senderId = property.createdBy ?? userId;
+
+      const paymentMessage =
+        `💳 Payment Details\n` +
+        `Bank: ${COMPANY_BANK_NAME}\n` +
+        `Account Name: ${COMPANY_ACCOUNT_NAME}\n` +
+        `Account Number: ${COMPANY_ACCOUNT_NUMBER}\n` +
+        (COMPANY_PAYMENT_INSTRUCTIONS
+          ? `\nNote: ${COMPANY_PAYMENT_INSTRUCTIONS}`
+          : '');
+
+      await this.prisma.chatMessage.create({
+        data: {
+          propertyId,
+          senderId,
+          receiverId: userId,
+          message: paymentMessage,
+          messageType: MessageType.SYSTEM,
+        },
+      });
+    }
   }
+
+  // 4. Audit log (we can log every click; we also tell if it's first time)
+  await this.prisma.auditLog.create({
+    data: {
+      userId,
+      action: 'CLICKED_INTERESTED',
+      entityType: 'PROPERTY',
+      entityId: propertyId,
+      metadata: {
+        propertyTitle: property.title,
+        sellerId: property.createdBy,
+        isFirstTime: !existingInterest,
+      },
+    },
+  });
+
+  return interest;
+}
+
 
   /**
    * Get all users interested in a property (for admin)
@@ -465,8 +517,11 @@ export class MessagesService {
 
   // ==================== SALES & MARKING ====================
 
-  /**
+    /**
    * Admin marks property as sold to a specific buyer
+   */
+    /**
+   * Admin submits a sale for a specific buyer (manual proof phase)
    */
   async markAsSold(
     adminId: string,
@@ -474,8 +529,11 @@ export class MessagesService {
     buyerId: string,
     amount: number,
     paymentProofUrl?: string,
+    paymentMethod?: PaymentMethod,
+    paymentReference?: string,
+    notes?: string,
   ) {
-    // Verify admin owns this property
+    // 1. Verify admin owns this property
     const property = await this.prisma.item.findFirst({
       where: {
         id: propertyId,
@@ -487,26 +545,42 @@ export class MessagesService {
       throw new ForbiddenException('Not your property');
     }
 
-    // Create sale record
+    // 2. Verify buyer exists (optional but safer)
+    const buyer = await this.prisma.user.findUnique({
+      where: { id: buyerId },
+    });
+
+    if (!buyer) {
+      throw new NotFoundException('Buyer not found');
+    }
+
+    // 3. Create sale record in "payment submitted / waiting finance" state
     const sale = await this.prisma.sale.create({
       data: {
         propertyId,
         buyerId,
         sellerId: adminId,
         amount,
-        paymentProofUrl,
-        status: 'CONFIRMED',
+        paymentProofUrl: paymentProofUrl ?? null,
+        paymentMethod: paymentMethod ?? null,
+        paymentReference: paymentReference ?? null,
+        notes: notes ?? null,
+
+        // Manual-phase flow:
+        status: SaleStatus.PAYMENT_SUBMITTED,
+        financeStatus: FinanceStatus.PENDING,
         markedSoldAt: new Date(),
+        companyAccountPaid: false,
       },
     });
 
-    // Update property status to SOLD
+    // 4. Update property status to SOLD (so others don't try to buy it)
     await this.prisma.item.update({
       where: { id: propertyId },
-      data: { status: 'SOLD' },
+      data: { status: ItemStatus.SOLD },
     });
 
-    // Update buyer's interest to PURCHASED
+    // 5. Update buyer's interest to PURCHASED
     await this.prisma.propertyInterest.updateMany({
       where: {
         propertyId,
@@ -515,7 +589,7 @@ export class MessagesService {
       data: { status: InterestStatus.PURCHASED },
     });
 
-    // Update other interested users to EXPIRED
+    // 6. Update other interested users to EXPIRED
     await this.prisma.propertyInterest.updateMany({
       where: {
         propertyId,
@@ -525,7 +599,7 @@ export class MessagesService {
       data: { status: InterestStatus.EXPIRED },
     });
 
-    // Audit log
+    // 7. Audit log with extra payment info
     await this.prisma.auditLog.create({
       data: {
         userId: adminId,
@@ -536,23 +610,28 @@ export class MessagesService {
           buyerId,
           amount,
           saleId: sale.id,
+          paymentMethod: paymentMethod ?? null,
+          paymentReference: paymentReference ?? null,
         },
       },
     });
 
-    // Notify buyer via system message
+    // 8. Notify buyer via system message
     await this.prisma.chatMessage.create({
       data: {
         propertyId,
         senderId: adminId,
         receiverId: buyerId,
-        message: '🎉 Congratulations! This property has been marked as SOLD to you.',
+        message:
+          '🎉 Congratulations! This property has been marked as SOLD to you. Our finance team will verify your payment shortly.',
         messageType: MessageType.SYSTEM,
       },
     });
 
     return sale;
   }
+
+
 
   /**
    * Get admin's sales history

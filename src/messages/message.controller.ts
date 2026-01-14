@@ -14,7 +14,7 @@ import { MessagesService } from './message.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
-import { Role, MessageType } from '@prisma/client';
+import { Role, MessageType, PaymentMethod } from '@prisma/client';
 
 @Controller('messages')
 export class MessagesController {
@@ -144,6 +144,9 @@ export class MessagesController {
       buyerId: string;
       amount: number;
       paymentProofUrl?: string;
+      paymentMethod?: PaymentMethod;   // NEW (optional)
+      paymentReference?: string;       // NEW (optional)
+      notes?: string;                  // NEW (optional)
     },
   ) {
     return this.messagesService.markAsSold(
@@ -152,6 +155,9 @@ export class MessagesController {
       body.buyerId,
       body.amount,
       body.paymentProofUrl,
+      body.paymentMethod,
+      body.paymentReference,
+      body.notes,
     );
   }
 

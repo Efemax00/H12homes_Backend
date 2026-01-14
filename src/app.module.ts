@@ -12,6 +12,10 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { ChatModule } from './chat/chat.module';
 import { MessagesModule } from './messages/message.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { PaymentModule } from './payment/payment.module';
+
+
+
 
 @Module({
   imports: [
@@ -44,6 +48,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     ChatModule,
     MessagesModule,
     AnalyticsModule,
+    PaymentModule,
   ],
   controllers: [AppController],
   providers: [

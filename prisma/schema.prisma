@@ -6,6 +6,8 @@ datasource db {
   provider = "postgresql"
 }
 
+// ==================== AUTH & CORE ====================
+
 model RefreshToken {
   id        String   @id @default(uuid())
   token     String   @unique
@@ -13,11 +15,10 @@ model RefreshToken {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
-  
+
   @@index([userId])
   @@index([token])
 }
-
 
 model User {
   id         String   @id @default(uuid()) @db.Uuid
@@ -45,22 +46,24 @@ model User {
   propertyViews    PropertyView[]        @relation("UserPropertyViews")
   engagements      PropertyEngagement[]  @relation("UserEngagements")
 
+  items            Item[]
+  itemsCreated     Item[]                @relation("ItemCreatedBy")
 
-  items      Item[]
-
-  itemsCreated Item[] @relation("ItemCreatedBy")
+  // NEW: payments, commissions, finance reviews
+  payments             Payment[]
+  adminCommissions     Commission[]      @relation("AdminCommissions")
+  financeReviewedSales Sale[]            @relation("FinanceReviewedSales")
 
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  passwordResetToken String? @unique
-  passwordResetTokenExpiresAt DateTime?
+  passwordResetToken           String?  @unique
+  passwordResetTokenExpiresAt  DateTime?
 
-  isEmailVerified     Boolean   @default(false)
-  emailVerificationToken String? @unique
+  isEmailVerified              Boolean  @default(false)
+  emailVerificationToken       String?  @unique
   emailVerificationTokenExpiresAt DateTime?
 }
-
 
 enum Role {
   USER
@@ -68,6 +71,8 @@ enum Role {
   ADMIN
   SUPER_ADMIN
 }
+
+// ==================== ITEMS / PROPERTIES ====================
 
 model Item {
   id             String   @id @default(uuid()) @db.Uuid
@@ -82,17 +87,15 @@ model Item {
   status         ItemStatus @default(PENDING)
   isFeatured     Boolean    @default(false)
 
-  
   category       ItemCategory @default(FOR_SALE)
+  itemType       ItemType     @default(HOUSE)
 
-   itemType      ItemType @default(HOUSE)
+  bedrooms       Int?
+  bathrooms      Int?
+  sqft           Float?
+  propertyType   String?
 
-  bedrooms       Int?       
-  bathrooms      Int?       
-  sqft           Float?     
-  propertyType   String?  
-
-   viewCount            Int      @default(0)
+  viewCount            Int      @default(0)
   uniqueViewCount      Int      @default(0)
   interestedCount      Int      @default(0)
   whatsappClickCount   Int      @default(0)
@@ -104,18 +107,16 @@ model Item {
   views       PropertyView[]        @relation("PropertyViews")
   engagements PropertyEngagement[]  @relation("PropertyEngagements")
 
+  // NEW: payments related to this property
+  payments    Payment[]
 
   isDeleted      Boolean    @default(false)
   deletedAt      DateTime?
   deletedBy      String?    @db.Uuid
-  deletionReason String?  
+  deletionReason String?
 
   createdBy      String?    @db.Uuid
   createdByUser  User?      @relation("ItemCreatedBy", fields: [createdBy], references: [id])
-
-  
-  @@index([isDeleted])
-
 
   images         ItemImage[]
 
@@ -124,10 +125,12 @@ model Item {
 
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
+
+  @@index([isDeleted])
 }
 
 model ItemImage {
-  id        String @id @default(uuid()) @db.Uuid 
+  id        String @id @default(uuid()) @db.Uuid
   url       String
   order     Int    @default(0)
 
@@ -143,15 +146,17 @@ enum ItemStatus {
 }
 
 enum ItemCategory {
-  FOR_SALE        
-  FOR_RENT        
-  SHORT_STAY      
+  FOR_SALE
+  FOR_RENT
+  SHORT_STAY
 }
 
 enum ItemType {
-  HOUSE           
-  HOUSEHOLD_ITEM  
+  HOUSE
+  HOUSEHOLD_ITEM
 }
+
+// ==================== ANALYTICS / ENGAGEMENT ====================
 
 model PropertyView {
   id         String   @id @default(uuid()) @db.Uuid
@@ -163,7 +168,6 @@ model PropertyView {
   sessionId  String?  // Group views in same session
   viewedAt   DateTime @default(now())
 
-  // Relations
   property   Item     @relation("PropertyViews", fields: [propertyId], references: [id], onDelete: Cascade)
   user       User?    @relation("UserPropertyViews", fields: [userId], references: [id], onDelete: SetNull)
 
@@ -179,10 +183,9 @@ model PropertyEngagement {
   propertyId   String         @db.Uuid
   userId       String?        @db.Uuid
   actionType   EngagementType
-  metadata     Json?          // Extra context per action type
+  metadata     Json?
   createdAt    DateTime       @default(now())
 
-  // Relations
   property     Item           @relation("PropertyEngagements", fields: [propertyId], references: [id], onDelete: Cascade)
   user         User?          @relation("UserEngagements", fields: [userId], references: [id], onDelete: SetNull)
 
@@ -194,17 +197,18 @@ model PropertyEngagement {
 }
 
 enum EngagementType {
-  CLICKED_INTERESTED    // Clicked "I'm Interested" button
-  OPENED_WHATSAPP       // Clicked WhatsApp contact
-  CLICKED_PHONE         // Clicked phone number
-  VIEWED_IMAGE          // Opened image gallery
-  SHARED_PROPERTY       // Shared via social media
-  BOOKMARKED            // Saved/favorited
-  CLICKED_DIRECTIONS    // Clicked map/directions
-  DOWNLOADED_BROCHURE   // Downloaded property info
+  CLICKED_INTERESTED
+  OPENED_WHATSAPP
+  CLICKED_PHONE
+  VIEWED_IMAGE
+  SHARED_PROPERTY
+  BOOKMARKED
+  CLICKED_DIRECTIONS
+  DOWNLOADED_BROCHURE
 }
 
-// Add these enums
+// ==================== INTERESTS / CHAT ====================
+
 enum InterestStatus {
   ACTIVE
   PURCHASED
@@ -228,7 +232,6 @@ enum SaleStatus {
   DISPUTED
 }
 
-// Add these models
 model PropertyInterest {
   id         String         @id @default(uuid()) @db.Uuid
   propertyId String         @db.Uuid
@@ -270,6 +273,8 @@ model ChatMessage {
   @@map("chat_messages")
 }
 
+// ==================== SALES / DEALS / PAYMENTS ====================
+
 model Sale {
   id                 String     @id @default(uuid()) @db.Uuid
   propertyId         String     @db.Uuid
@@ -282,12 +287,26 @@ model Sale {
   markedSoldAt       DateTime?
   deliveredAt        DateTime?
   notes              String?    @db.Text
+
+  // NEW: manual payment details + finance review
+  paymentMethod       PaymentMethod?
+  paymentReference    String?
+  financeStatus       FinanceStatus   @default(PENDING)
+  financeReviewedById String?         @db.Uuid
+  financeReviewedBy   User?           @relation("FinanceReviewedSales", fields: [financeReviewedById], references: [id])
+  financeReviewedAt   DateTime?
+  financeComment      String?
+
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
 
   property Item @relation("PropertySales", fields: [propertyId], references: [id], onDelete: Cascade)
   buyer    User @relation("Purchases", fields: [buyerId], references: [id], onDelete: Cascade)
   seller   User @relation("Sales", fields: [sellerId], references: [id], onDelete: Cascade)
+
+  // NEW: linked payments & commissions
+  payments    Payment[]
+  commissions Commission[]
 
   @@index([propertyId])
   @@index([buyerId])
@@ -296,6 +315,86 @@ model Sale {
   @@index([createdAt])
   @@map("sales")
 }
+
+// Payment providers for manual and Paystack phases
+enum PaymentProvider {
+  MANUAL_TRANSFER
+  PAYSTACK
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  CASH_DEPOSIT
+  CARD
+  OTHER
+}
+
+enum FinanceStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+  REJECTED
+}
+
+// All money flows
+model Payment {
+  id         String          @id @default(uuid()) @db.Uuid
+  saleId     String          @db.Uuid
+  userId     String          @db.Uuid
+  propertyId String          @db.Uuid
+  provider   PaymentProvider
+  status     PaymentStatus   @default(PENDING)
+  amount     Float
+  currency   String          @default("NGN")
+  reference  String?         @unique // Paystack ref or bank narration
+  rawData    Json?
+
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  sale       Sale            @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  property   Item            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@index([userId])
+  @@index([propertyId])
+  @@index([status])
+  @@map("payments")
+}
+
+// Commissions for admins/agents
+model Commission {
+  id        String             @id @default(uuid()) @db.Uuid
+  saleId    String             @db.Uuid
+  adminId   String             @db.Uuid
+  amount    Float
+  status    CommissionStatus   @default(PENDING)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  sale      Sale               @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  admin     User               @relation("AdminCommissions", fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@index([adminId])
+  @@map("commissions")
+}
+
+// ==================== AUDIT ====================
 
 model AuditLog {
   id         String    @id @default(uuid()) @db.Uuid
@@ -316,6 +415,3 @@ model AuditLog {
   @@index([createdAt])
   @@map("audit_logs")
 }
-
-
-
