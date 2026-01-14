@@ -1,5 +1,5 @@
 // src/messages/messages.service.ts
-import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MessageType, InterestStatus } from '@prisma/client';
 
@@ -22,6 +22,11 @@ export class MessagesService {
 
     if (!property) {
       throw new NotFoundException('Property not found');
+    }
+
+    // ✅ Prevent admin from expressing interest in their own property
+    if (property.createdBy === userId) {
+      throw new BadRequestException('Cannot express interest in your own property');
     }
 
     // Create or update interest
@@ -131,8 +136,15 @@ export class MessagesService {
     // Get last message and unread count for each conversation
     const conversationsWithMessages = await Promise.all(
       interests.map(async (interest) => {
+        // ✅ FIX: Only get messages between THIS user and the admin
         const lastMessage = await this.prisma.chatMessage.findFirst({
-          where: { propertyId: interest.propertyId },
+          where: {
+            propertyId: interest.propertyId,
+            OR: [
+              { senderId: userId },
+              { receiverId: userId },
+            ],
+          },
           orderBy: { createdAt: 'desc' },
           select: {
             message: true,
@@ -164,7 +176,7 @@ export class MessagesService {
     return conversationsWithMessages;
   }
 
-    /**
+  /**
    * Get user's conversations (wrapper for getUserInterests)
    * Used by the frontend "messages" / header for logged-in users
    */
@@ -172,11 +184,10 @@ export class MessagesService {
     return this.getUserInterests(userId);
   }
 
-
   // ==================== CHAT MESSAGES ====================
 
   /**
-   * Send a message in property chat
+   * ✅ FIXED: Send a message in property chat (bidirectional)
    */
   async sendMessage(
     senderId: string,
@@ -185,7 +196,7 @@ export class MessagesService {
     messageType: MessageType = MessageType.TEXT,
     attachmentUrl?: string,
   ) {
-    // Get property to find receiver
+    // Get property to find owner
     const property = await this.prisma.item.findUnique({
       where: { id: propertyId },
       select: { createdBy: true },
@@ -199,7 +210,27 @@ export class MessagesService {
       throw new NotFoundException('Property has no owner');
     }
 
-    const receiverId = property.createdBy;
+    let receiverId: string;
+
+    // ✅ BIDIRECTIONAL LOGIC:
+    if (senderId === property.createdBy) {
+      // Admin is sending → find the buyer
+      // Get the interest record to find who the buyer is
+      const interest = await this.prisma.propertyInterest.findFirst({
+        where: { propertyId },
+        select: { userId: true },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (!interest) {
+        throw new NotFoundException('No interested buyer found');
+      }
+
+      receiverId = interest.userId;
+    } else {
+      // Buyer is sending → send to admin (property owner)
+      receiverId = property.createdBy;
+    }
 
     // Create message
     const chatMessage = await this.prisma.chatMessage.create({
@@ -242,7 +273,7 @@ export class MessagesService {
   }
 
   /**
-   * Get chat history for a property (between buyer and seller)
+   * ✅ FIXED: Get chat history ONLY between the current user and the other party
    */
   async getChatHistory(propertyId: string, userId: string) {
     // Verify user is either the buyer or the seller
@@ -267,8 +298,15 @@ export class MessagesService {
       throw new ForbiddenException('Not authorized to view this chat');
     }
 
+    // ✅ FIX: Only get messages where current user is sender OR receiver
     const messages = await this.prisma.chatMessage.findMany({
-      where: { propertyId },
+      where: {
+        propertyId,
+        OR: [
+          { senderId: userId },
+          { receiverId: userId },
+        ],
+      },
       include: {
         sender: {
           select: {
@@ -299,9 +337,9 @@ export class MessagesService {
   }
 
   /**
-   * Get all conversations for an admin (their properties only)
+   * ✅ FIXED: Get all conversations for an admin (their properties only, grouped by buyer)
    */
-   async getAdminConversations(adminId: string) {
+  async getAdminConversations(adminId: string) {
     // 1. Get property IDs created by this admin
     const properties = await this.prisma.item.findMany({
       where: { createdBy: adminId },
@@ -314,15 +352,13 @@ export class MessagesService {
 
     const propertyIds = properties.map((p) => p.id);
 
-    // 2. Get all messages for those properties where admin is involved
-    const messages = await this.prisma.chatMessage.findMany({
+    // 2. Get all interests for admin's properties
+    const interests = await this.prisma.propertyInterest.findMany({
       where: {
         propertyId: { in: propertyIds },
-        // admin is either sender or receiver
-        OR: [{ senderId: adminId }, { receiverId: adminId }],
       },
       include: {
-        sender: {
+        user: {
           select: {
             id: true,
             firstName: true,
@@ -330,53 +366,66 @@ export class MessagesService {
             avatarUrl: true,
           },
         },
+        property: {
+          select: {
+            title: true,
+            price: true,
+            images: true,
+          },
+        },
       },
-      orderBy: { createdAt: 'desc' }, // latest first
     });
 
-    // 3. Group messages by propertyId and compute unread_count + latest message
-    const propertyMap = new Map<string, any>();
-
-    for (const msg of messages) {
-      const existing = propertyMap.get(msg.propertyId);
-
-      // Compute unread for this property (for the admin)
-      const isUnreadForAdmin = msg.receiverId === adminId && !msg.isRead;
-
-      if (!existing) {
-        // First time we see this property: init conversation
-        const prop = properties.find((p) => p.id === msg.propertyId);
-
-        propertyMap.set(msg.propertyId, {
-          propertyId: msg.propertyId,
-          propertyTitle: prop?.title ?? null,
-          price: prop?.price ?? null,
-          images: prop?.images ?? [],
-          lastMessage: msg.message,
-          lastMessageAt: msg.createdAt,
-          buyerId: msg.senderId === adminId ? msg.receiverId : msg.senderId,
-          buyerFirstName:
-            msg.senderId === adminId ? null : msg.sender?.firstName ?? null,
-          buyerLastName:
-            msg.senderId === adminId ? null : msg.sender?.lastName ?? null,
-          buyerAvatar:
-            msg.senderId === adminId ? null : msg.sender?.avatarUrl ?? null,
-          unreadCount: isUnreadForAdmin ? 1 : 0,
+    // 3. For each interest, get the last message and unread count
+    const conversations = await Promise.all(
+      interests.map(async (interest) => {
+        // Get last message between admin and THIS specific buyer
+        const lastMessage = await this.prisma.chatMessage.findFirst({
+          where: {
+            propertyId: interest.propertyId,
+            OR: [
+              { senderId: adminId, receiverId: interest.userId },
+              { senderId: interest.userId, receiverId: adminId },
+            ],
+          },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            message: true,
+            createdAt: true,
+          },
         });
-      } else {
-        // We already have a conversation; just bump unread count if needed
-        if (isUnreadForAdmin) {
-          existing.unreadCount += 1;
-        }
 
-        // No need to update lastMessage because messages are sorted desc,
-        // so the first one we saw was already the latest.
-      }
-    }
+        // Get unread count from THIS buyer to admin
+        const unreadCount = await this.prisma.chatMessage.count({
+          where: {
+            propertyId: interest.propertyId,
+            senderId: interest.userId,
+            receiverId: adminId,
+            isRead: false,
+          },
+        });
 
-    return Array.from(propertyMap.values());
+        return {
+          propertyId: interest.propertyId,
+          propertyTitle: interest.property.title,
+          price: interest.property.price,
+          images: interest.property.images,
+          buyerId: interest.userId,
+          buyerFirstName: interest.user.firstName,
+          buyerLastName: interest.user.lastName,
+          buyerAvatar: interest.user.avatarUrl,
+          lastMessage: lastMessage?.message || null,
+          lastMessageAt: lastMessage?.createdAt || interest.createdAt,
+          unreadCount,
+        };
+      })
+    );
+
+    // Sort by last message time (most recent first)
+    return conversations.sort((a, b) =>
+      new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+    );
   }
-
 
   /**
    * Get all conversations platform-wide (SUPER_ADMIN only)
