@@ -133,33 +133,33 @@ export class MessagesController {
    * Mark property as sold
    * POST /messages/mark-sold
    */
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post('mark-sold')
-  async markAsSold(
-    @Req() req,
-    @Body()
-    body: {
-      propertyId: string;
-      buyerId: string;
-      amount: number;
-      paymentProofUrl?: string;
-      paymentMethod?: PaymentMethod;   // NEW (optional)
-      paymentReference?: string;       // NEW (optional)
-      notes?: string;                  // NEW (optional)
-    },
-  ) {
-    return this.messagesService.markAsSold(
-      req.user.id,
-      body.propertyId,
-      body.buyerId,
-      body.amount,
-      body.paymentProofUrl,
-      body.paymentMethod,
-      body.paymentReference,
-      body.notes,
-    );
-  }
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.ADMIN, Role.SUPER_ADMIN)
+async markAsSold(
+  @Req() req,
+  @Body()
+  body: {
+    propertyId: string;
+    buyerId: string;
+    amount: number;
+    paymentProofUrl?: string;
+    mode?: 'SALE' | 'RENT';
+    rentDurationMonths?: number;
+    notes?: string;
+  },
+) {
+  return this.messagesService.markAsSold(
+    req.user.id,
+    body.propertyId,
+    body.buyerId,
+    body.amount,
+    body.paymentProofUrl,
+    body.mode,              // optional, defaults to 'SALE'
+    body.rentDurationMonths,
+    body.notes,
+  );
+}
 
   /**
    * Get admin's sales history

@@ -1,7 +1,8 @@
 // src/messages/messages.service.ts
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { MessageType, InterestStatus, ItemStatus, FinanceStatus, SaleStatus, PaymentMethod } from '@prisma/client';
+import { MessageType, InterestStatus, ItemStatus } from '@prisma/client';
+
 
 @Injectable()
 export class MessagesService {
@@ -523,21 +524,35 @@ export class MessagesService {
     /**
    * Admin submits a sale for a specific buyer (manual proof phase)
    */
-  async markAsSold(
+  /**
+   * Admin marks property as SOLD or RENTED to a specific buyer
+   * - SALE  -> property is gone forever (status = SOLD)
+   * - RENT  -> property becomes RENTED until rentEndDate, then can auto-reopen
+   * - Household items / hotels / apartments / short-stay -> always AVAILABLE
+   */
+   async markAsSold(
     adminId: string,
     propertyId: string,
     buyerId: string,
     amount: number,
     paymentProofUrl?: string,
-    paymentMethod?: PaymentMethod,
-    paymentReference?: string,
+    mode: 'SALE' | 'RENT' = 'SALE',
+    rentDurationMonths?: number,
     notes?: string,
   ) {
+    
     // 1. Verify admin owns this property
     const property = await this.prisma.item.findFirst({
       where: {
         id: propertyId,
         createdBy: adminId,
+      },
+      select: {
+        id: true,
+        category: true,
+        itemType: true,
+        propertyType: true,
+        status: true,
       },
     });
 
@@ -545,7 +560,7 @@ export class MessagesService {
       throw new ForbiddenException('Not your property');
     }
 
-    // 2. Verify buyer exists (optional but safer)
+    // 2. Verify buyer exists
     const buyer = await this.prisma.user.findUnique({
       where: { id: buyerId },
     });
@@ -554,7 +569,35 @@ export class MessagesService {
       throw new NotFoundException('Buyer not found');
     }
 
-    // 3. Create sale record in "payment submitted / waiting finance" state
+    // 3. Business rules
+
+    // Items that should ALWAYS remain available (can be sold/rented many times)
+    const isAlwaysAvailable =
+      property.itemType === 'HOUSEHOLD_ITEM' ||
+      property.category === 'SHORT_STAY' ||
+      property.propertyType === 'APARTMENT' ||
+      property.propertyType === 'HOTEL';
+
+    // Long-term RENT: normal house, FOR_RENT, mode = RENT, not in always-available group
+    const isRental =
+      !isAlwaysAvailable &&
+      property.category === 'FOR_RENT' &&
+      property.itemType === 'HOUSE' &&
+      mode === 'RENT';
+
+    // 4. Compute rental dates if this is a rental
+    let rentalMonthsToUse: number | null = null;
+    let rentStart: Date | null = null;
+    let rentEnd: Date | null = null;
+
+    if (isRental) {
+      rentalMonthsToUse = rentDurationMonths ?? 12; // default 12 months
+      rentStart = new Date();
+      rentEnd = new Date(rentStart);
+      rentEnd.setMonth(rentEnd.getMonth() + rentalMonthsToUse);
+    }
+
+    // 5. Create sale / rental record
     const sale = await this.prisma.sale.create({
       data: {
         propertyId,
@@ -562,25 +605,47 @@ export class MessagesService {
         sellerId: adminId,
         amount,
         paymentProofUrl: paymentProofUrl ?? null,
-        paymentMethod: paymentMethod ?? null,
-        paymentReference: paymentReference ?? null,
         notes: notes ?? null,
 
-        // Manual-phase flow:
-        status: SaleStatus.PAYMENT_SUBMITTED,
-        financeStatus: FinanceStatus.PENDING,
-        markedSoldAt: new Date(),
+        // basic manual flow: payment submitted, waiting finance confirmation
+        status: 'PAYMENT_SUBMITTED', // or 'CONFIRMED' if you prefer skipping the pending step
         companyAccountPaid: false,
+        markedSoldAt: new Date(),
+
+        // rental info
+        isRental,
+        rentalMonths: rentalMonthsToUse,
+        rentalStartDate: rentStart,
+        rentalEndDate: rentEnd,
       },
     });
 
-    // 4. Update property status to SOLD (so others don't try to buy it)
-    await this.prisma.item.update({
-      where: { id: propertyId },
-      data: { status: ItemStatus.SOLD },
-    });
+    // 6. Update property status based on rules
+    const itemUpdateData: any = {};
 
-    // 5. Update buyer's interest to PURCHASED
+    if (isAlwaysAvailable) {
+      // Household items, hotels, apartments, short-stay:
+      // ✅ remain AVAILABLE; no status change
+    } else if (isRental) {
+      // Long-term rent: block it for that period
+      itemUpdateData.status = ItemStatus.RENTED;
+      itemUpdateData.rentStartDate = rentStart;
+      itemUpdateData.rentEndDate = rentEnd;
+      itemUpdateData.rentDurationMonths = rentalMonthsToUse;
+      itemUpdateData.autoReopenAt = rentEnd;
+    } else {
+      // Outright sale: property is gone
+      itemUpdateData.status = ItemStatus.SOLD;
+    }
+
+    if (Object.keys(itemUpdateData).length > 0) {
+      await this.prisma.item.update({
+        where: { id: propertyId },
+        data: itemUpdateData,
+      });
+    }
+
+    // 7. Update interests
     await this.prisma.propertyInterest.updateMany({
       where: {
         propertyId,
@@ -589,7 +654,6 @@ export class MessagesService {
       data: { status: InterestStatus.PURCHASED },
     });
 
-    // 6. Update other interested users to EXPIRED
     await this.prisma.propertyInterest.updateMany({
       where: {
         propertyId,
@@ -599,38 +663,39 @@ export class MessagesService {
       data: { status: InterestStatus.EXPIRED },
     });
 
-    // 7. Audit log with extra payment info
+    // 8. Audit log
     await this.prisma.auditLog.create({
       data: {
         userId: adminId,
-        action: 'MARKED_SOLD',
+        action: isRental ? 'MARKED_RENTED' : 'MARKED_SOLD',
         entityType: 'PROPERTY',
         entityId: propertyId,
         metadata: {
           buyerId,
           amount,
           saleId: sale.id,
-          paymentMethod: paymentMethod ?? null,
-          paymentReference: paymentReference ?? null,
+          isRental,
+          rentalMonths: rentalMonthsToUse,
+          rentEndDate: rentEnd,
         },
       },
     });
 
-    // 8. Notify buyer via system message
+    // 9. Notify buyer via system message
     await this.prisma.chatMessage.create({
       data: {
         propertyId,
         senderId: adminId,
         receiverId: buyerId,
-        message:
-          '🎉 Congratulations! This property has been marked as SOLD to you. Our finance team will verify your payment shortly.',
+        message: isRental
+          ? '🏠 Your rent has been confirmed for this property.'
+          : '🎉 Congratulations! This property has been marked as SOLD to you. Our finance team will verify your payment shortly.',
         messageType: MessageType.SYSTEM,
       },
     });
 
     return sale;
   }
-
 
 
   /**

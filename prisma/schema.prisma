@@ -87,6 +87,12 @@ model Item {
   status         ItemStatus @default(PENDING)
   isFeatured     Boolean    @default(false)
 
+  rentStartDate      DateTime?   
+  rentEndDate        DateTime?   
+  rentDurationMonths Int?        
+  autoReopenAt       DateTime?   
+
+
   category       ItemCategory @default(FOR_SALE)
   itemType       ItemType     @default(HOUSE)
 
@@ -143,6 +149,7 @@ enum ItemStatus {
   AVAILABLE
   SOLD
   REJECTED
+  RENTED  
 }
 
 enum ItemCategory {
@@ -287,6 +294,11 @@ model Sale {
   markedSoldAt       DateTime?
   deliveredAt        DateTime?
   notes              String?    @db.Text
+
+  isRental           Boolean    @default(false)
+  rentalMonths       Int?
+  rentalStartDate    DateTime?
+  rentalEndDate      DateTime?
 
   // NEW: manual payment details + finance review
   paymentMethod       PaymentMethod?
