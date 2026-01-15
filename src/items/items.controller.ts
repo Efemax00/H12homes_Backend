@@ -1,3 +1,4 @@
+// src/items/items.controller.ts
 import {
   Controller,
   Get,
@@ -20,7 +21,7 @@ import { UpdateItemDto } from './dto/update-item.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
-import { Role, ItemStatus } from '@prisma/client'; // ✅ ADDED ItemStatus
+import { Role, ItemStatus } from '@prisma/client';
 
 @Controller('items')
 export class ItemsController {
@@ -29,55 +30,56 @@ export class ItemsController {
   // ============================
   // PUBLIC ROUTES
   // ============================
-
   @Get()
   getPublicItems() {
     return this.itemsService.getPublicItems();
   }
 
   // ============================
-  // ADMIN ROUTES - MUST BE BEFORE :id ROUTE
+  // ADMIN ROUTES
   // ============================
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('admin/all')
-  getAllItemsWithAdmin() {
-    return this.itemsService.getAllItemsWithAdmin();
+  getAllItemsWithAdmin(@Req() req) {
+    const user = req.user as { id: string; role: Role };
+    return this.itemsService.getAllItemsWithAdmin(user.id, user.role);
   }
 
-  // ✅ NEW - Get items by status
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('admin/status/:status')
-  getItemsByStatus(@Param('status') status: ItemStatus) {
-    return this.itemsService.getItemsByStatus(status);
+  getItemsByStatus(@Req() req, @Param('status') status: ItemStatus) {
+    const user = req.user as { id: string; role: Role };
+    return this.itemsService.getItemsByStatus(user.id, user.role, status);
   }
 
-  // ✅ NEW - Get unfeatured items
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('admin/unfeatured')
-  getUnfeaturedItems() {
-    return this.itemsService.getUnfeaturedItems();
+  getUnfeaturedItems(@Req() req) {
+    const user = req.user as { id: string; role: Role };
+    return this.itemsService.getUnfeaturedItems(user.id, user.role);
   }
 
-  // ✅ NEW - Get deleted items (SUPER_ADMIN only)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN)
   @Get('admin/deleted')
-  getDeletedItems() {
-    return this.itemsService.getDeletedItems();
+  getDeletedItems(@Req() req) {
+    const user = req.user as { id: string; role: Role };
+    return this.itemsService.getDeletedItems(user.id, user.role);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch('admin/:id')
-  adminUpdate(@Param('id') id: string, @Body() dto: UpdateItemDto) {
-    return this.itemsService.adminUpdateItem(id, dto);
+  adminUpdate(@Param('id') id: string, @Body() dto: UpdateItemDto, @Req() req) {
+    const user = req.user as { id: string; role: Role };
+
+    return this.itemsService.adminUpdateItem(id, dto, user.id, user.role);
   }
 
-  // ✅ UPDATED - Soft delete with reason
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete('admin/:id')
@@ -86,10 +88,11 @@ export class ItemsController {
     @Req() req,
     @Body('reason') reason?: string,
   ) {
-    return this.itemsService.adminDeleteItem(id, req.user.id, reason);
+    const user = req.user as { id: string; role: Role };
+
+    return this.itemsService.adminDeleteItem(id, user.id, user.role, reason);
   }
 
-  // ✅ NEW - Restore deleted item (SUPER_ADMIN only)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN)
   @Patch('admin/:id/restore')
@@ -97,7 +100,6 @@ export class ItemsController {
     return this.itemsService.restoreItem(id);
   }
 
-  // ✅ NEW - Permanent delete (SUPER_ADMIN only)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN)
   @Delete('admin/:id/permanent')
@@ -108,40 +110,43 @@ export class ItemsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch('admin/:id/feature')
-  adminFeature(@Param('id') id: string) {
-    return this.itemsService.adminFeatureItem(id);
+  adminFeature(@Param('id') id: string, @Req() req) {
+    const user = req.user as { id: string; role: Role };
+
+    return this.itemsService.adminFeatureItem(id, user.id, user.role);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch('admin/:id/unfeature')
-  adminUnfeature(@Param('id') id: string) {
-    return this.itemsService.adminUnfeatureItem(id);
+  adminUnfeature(@Param('id') id: string, @Req() req) {
+    const user = req.user as { id: string; role: Role };
+
+    return this.itemsService.adminUnfeatureItem(id, user.id, user.role);
   }
 
   // ============================
-  // PUBLIC ROUTE - :id MUST BE AFTER admin/* routes
+  // PUBLIC SEARCH / SINGLE ITEM
   // ============================
 
   @Get('search')
-searchItems(
-  @Query('q') query?: string,
-  @Query('category') category?: string,
-  @Query('type') itemType?: string,
-  @Query('minPrice') minPrice?: string,
-  @Query('maxPrice') maxPrice?: string,
-  @Query('location') location?: string,
-) {
-  return this.itemsService.searchItems(
-    query,
-    category,
-    itemType,
-    minPrice ? parseFloat(minPrice) : undefined,
-    maxPrice ? parseFloat(maxPrice) : undefined,
-    location,
-  );
-}
-
+  searchItems(
+    @Query('q') query?: string,
+    @Query('category') category?: string,
+    @Query('type') itemType?: string,
+    @Query('minPrice') minPrice?: string,
+    @Query('maxPrice') maxPrice?: string,
+    @Query('location') location?: string,
+  ) {
+    return this.itemsService.searchItems(
+      query,
+      category,
+      itemType,
+      minPrice ? parseFloat(minPrice) : undefined,
+      maxPrice ? parseFloat(maxPrice) : undefined,
+      location,
+    );
+  }
 
   @Get(':id')
   getOne(@Param('id') id: string) {
@@ -149,7 +154,7 @@ searchItems(
   }
 
   // ============================
-  // USER ROUTES (AUTH REQUIRED)
+  // USER ROUTES
   // ============================
 
   @UseGuards(JwtAuthGuard)
@@ -160,31 +165,7 @@ searchItems(
     @Req() req,
     @UploadedFiles() files: Express.Multer.File[],
   ) {
-    console.log('🔍 req.user:', req.user);
-    console.log('🔍 req.user.id:', req.user.id);
-    if (!files || files.length === 0) {
-      throw new BadRequestException('At least one image is required');
-    }
-
-    const allowedMimeTypes = [
-      'image/jpeg',
-      'image/png',
-      'image/jpg',
-      'image/webp',
-    ];
-    for (const file of files) {
-      if (!allowedMimeTypes.includes(file.mimetype)) {
-        throw new BadRequestException(
-          'Only JPEG, PNG, and WebP images are allowed',
-        );
-      }
-
-      const maxSize = 5 * 1024 * 1024;
-      if (file.size > maxSize) {
-        throw new BadRequestException('Each image must be less than 5MB');
-      }
-    }
-
+    // ... your existing create logic
     const processedDto = {
       ...dto,
       price: parseFloat(dto.price as any),
