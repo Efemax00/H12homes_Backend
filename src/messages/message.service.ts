@@ -1,8 +1,12 @@
 // src/messages/messages.service.ts
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  ForbiddenException,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MessageType, InterestStatus, ItemStatus } from '@prisma/client';
-
 
 @Injectable()
 export class MessagesService {
@@ -15,121 +19,132 @@ export class MessagesService {
    * Creates interest record and audit log
    */
   async expressInterest(userId: string, propertyId: string) {
-  // 1. Check if property exists
-  const property = await this.prisma.item.findUnique({
-    where: { id: propertyId },
-    include: { createdByUser: true },
-  });
+    // 1. Check if property exists
+    const property = await this.prisma.item.findUnique({
+      where: { id: propertyId },
+      include: { createdByUser: true },
+    });
 
-  if (!property) {
-    throw new NotFoundException('Property not found');
-  }
+    if (!property) {
+      throw new NotFoundException('Property not found');
+    }
 
-  // Prevent admin from expressing interest in their own property
-  if (property.createdBy === userId) {
-    throw new BadRequestException('Cannot express interest in your own property');
-  }
+    // Prevent interest if property is SOLD or RENTED
+    if (
+      property.status === ItemStatus.SOLD ||
+      property.status === ItemStatus.RENTED
+    ) {
+      throw new ForbiddenException(
+        'This property is not accepting new interests at the moment.',
+      );
+    }
 
-  // 2. Check if interest already exists
-  const existingInterest = await this.prisma.propertyInterest.findUnique({
-    where: {
-      propertyId_userId: {
-        propertyId,
-        userId,
-      },
-    },
-  });
+    // Prevent admin from expressing interest in their own property
+    if (property.createdBy === userId) {
+      throw new BadRequestException(
+        'Cannot express interest in your own property',
+      );
+    }
 
-  let interest;
-
-  if (existingInterest) {
-    // ♻️ Just reactivate / bump timestamp – NO new system messages
-    interest = await this.prisma.propertyInterest.update({
+    // 2. Check if interest already exists
+    const existingInterest = await this.prisma.propertyInterest.findUnique({
       where: {
         propertyId_userId: {
           propertyId,
           userId,
         },
       },
-      data: {
-        status: InterestStatus.ACTIVE,
-        updatedAt: new Date(),
-      },
     });
-  } else {
-    // ✨ First time: create interest
-    interest = await this.prisma.propertyInterest.create({
+
+    let interest;
+
+    if (existingInterest) {
+      // ♻️ Just reactivate / bump timestamp – NO new system messages
+      interest = await this.prisma.propertyInterest.update({
+        where: {
+          propertyId_userId: {
+            propertyId,
+            userId,
+          },
+        },
+        data: {
+          status: InterestStatus.ACTIVE,
+          updatedAt: new Date(),
+        },
+      });
+    } else {
+      // ✨ First time: create interest
+      interest = await this.prisma.propertyInterest.create({
+        data: {
+          propertyId,
+          userId,
+          status: InterestStatus.ACTIVE,
+        },
+      });
+
+      // 3a. Notify admin (only if property has an owner)
+      if (property.createdBy) {
+        await this.prisma.chatMessage.create({
+          data: {
+            propertyId,
+            senderId: userId,
+            receiverId: property.createdBy,
+            message: '🔔 New buyer expressed interest in your property!',
+            messageType: MessageType.SYSTEM,
+          },
+        });
+      }
+
+      // 3b. Send payment details to user in the chat (optional but cool)
+      const {
+        COMPANY_BANK_NAME,
+        COMPANY_ACCOUNT_NAME,
+        COMPANY_ACCOUNT_NUMBER,
+        COMPANY_PAYMENT_INSTRUCTIONS,
+      } = process.env;
+
+      if (COMPANY_BANK_NAME && COMPANY_ACCOUNT_NAME && COMPANY_ACCOUNT_NUMBER) {
+        // Sender can be the admin (if exists) or the user themselves, but it's a SYSTEM message anyway
+        const senderId = property.createdBy ?? userId;
+
+        const paymentMessage =
+          `💳 Payment Details\n` +
+          `Bank: ${COMPANY_BANK_NAME}\n` +
+          `Account Name: ${COMPANY_ACCOUNT_NAME}\n` +
+          `Account Number: ${COMPANY_ACCOUNT_NUMBER}\n` +
+          (COMPANY_PAYMENT_INSTRUCTIONS
+            ? `\nNote: ${COMPANY_PAYMENT_INSTRUCTIONS}`
+            : '');
+
+        await this.prisma.chatMessage.create({
+          data: {
+            propertyId,
+            senderId,
+            receiverId: userId,
+            message: paymentMessage,
+            messageType: MessageType.SYSTEM,
+          },
+        });
+      }
+    }
+
+    // 4. Audit log (we can log every click; we also tell if it's first time)
+    await this.prisma.auditLog.create({
       data: {
-        propertyId,
         userId,
-        status: InterestStatus.ACTIVE,
+        action: 'CLICKED_INTERESTED',
+        entityType: 'PROPERTY',
+        entityId: propertyId,
+        metadata: {
+          propertyTitle: property.title,
+          sellerId: property.createdBy,
+          isFirstTime: !existingInterest,
+        },
       },
     });
 
-    // 3a. Notify admin (only if property has an owner)
-    if (property.createdBy) {
-      await this.prisma.chatMessage.create({
-        data: {
-          propertyId,
-          senderId: userId,
-          receiverId: property.createdBy,
-          message: '🔔 New buyer expressed interest in your property!',
-          messageType: MessageType.SYSTEM,
-        },
-      });
-    }
-
-    // 3b. Send payment details to user in the chat (optional but cool)
-    const {
-      COMPANY_BANK_NAME,
-      COMPANY_ACCOUNT_NAME,
-      COMPANY_ACCOUNT_NUMBER,
-      COMPANY_PAYMENT_INSTRUCTIONS,
-    } = process.env;
-
-    if (COMPANY_BANK_NAME && COMPANY_ACCOUNT_NAME && COMPANY_ACCOUNT_NUMBER) {
-      // Sender can be the admin (if exists) or the user themselves, but it's a SYSTEM message anyway
-      const senderId = property.createdBy ?? userId;
-
-      const paymentMessage =
-        `💳 Payment Details\n` +
-        `Bank: ${COMPANY_BANK_NAME}\n` +
-        `Account Name: ${COMPANY_ACCOUNT_NAME}\n` +
-        `Account Number: ${COMPANY_ACCOUNT_NUMBER}\n` +
-        (COMPANY_PAYMENT_INSTRUCTIONS
-          ? `\nNote: ${COMPANY_PAYMENT_INSTRUCTIONS}`
-          : '');
-
-      await this.prisma.chatMessage.create({
-        data: {
-          propertyId,
-          senderId,
-          receiverId: userId,
-          message: paymentMessage,
-          messageType: MessageType.SYSTEM,
-        },
-      });
-    }
+    return interest;
   }
-
-  // 4. Audit log (we can log every click; we also tell if it's first time)
-  await this.prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'CLICKED_INTERESTED',
-      entityType: 'PROPERTY',
-      entityId: propertyId,
-      metadata: {
-        propertyTitle: property.title,
-        sellerId: property.createdBy,
-        isFirstTime: !existingInterest,
-      },
-    },
-  });
-
-  return interest;
-}
-
 
   /**
    * Get all users interested in a property (for admin)
@@ -193,10 +208,7 @@ export class MessagesService {
         const lastMessage = await this.prisma.chatMessage.findFirst({
           where: {
             propertyId: interest.propertyId,
-            OR: [
-              { senderId: userId },
-              { receiverId: userId },
-            ],
+            OR: [{ senderId: userId }, { receiverId: userId }],
           },
           orderBy: { createdAt: 'desc' },
           select: {
@@ -223,7 +235,7 @@ export class MessagesService {
           lastMessageAt: lastMessage?.createdAt || interest.createdAt,
           unreadCount,
         };
-      })
+      }),
     );
 
     return conversationsWithMessages;
@@ -355,10 +367,7 @@ export class MessagesService {
     const messages = await this.prisma.chatMessage.findMany({
       where: {
         propertyId,
-        OR: [
-          { senderId: userId },
-          { receiverId: userId },
-        ],
+        OR: [{ senderId: userId }, { receiverId: userId }],
       },
       include: {
         sender: {
@@ -471,12 +480,14 @@ export class MessagesService {
           lastMessageAt: lastMessage?.createdAt || interest.createdAt,
           unreadCount,
         };
-      })
+      }),
     );
 
     // Sort by last message time (most recent first)
-    return conversations.sort((a, b) =>
-      new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+    return conversations.sort(
+      (a, b) =>
+        new Date(b.lastMessageAt).getTime() -
+        new Date(a.lastMessageAt).getTime(),
     );
   }
 
@@ -518,10 +529,10 @@ export class MessagesService {
 
   // ==================== SALES & MARKING ====================
 
-    /**
+  /**
    * Admin marks property as sold to a specific buyer
    */
-    /**
+  /**
    * Admin submits a sale for a specific buyer (manual proof phase)
    */
   /**
@@ -530,7 +541,7 @@ export class MessagesService {
    * - RENT  -> property becomes RENTED until rentEndDate, then can auto-reopen
    * - Household items / hotels / apartments / short-stay -> always AVAILABLE
    */
-   async markAsSold(
+  async markAsSold(
     adminId: string,
     propertyId: string,
     buyerId: string,
@@ -540,7 +551,6 @@ export class MessagesService {
     rentDurationMonths?: number,
     notes?: string,
   ) {
-    
     // 1. Verify admin owns this property
     const property = await this.prisma.item.findFirst({
       where: {
@@ -696,7 +706,6 @@ export class MessagesService {
 
     return sale;
   }
-
 
   /**
    * Get admin's sales history
