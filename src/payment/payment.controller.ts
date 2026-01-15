@@ -25,6 +25,9 @@ import {
   InterestStatus,
   FinanceStatus,
   SaleStatus,
+  ItemStatus,
+  ItemCategory,
+  PaymentStatus,
 } from '@prisma/client';
 
 @Controller('payment')
@@ -34,6 +37,10 @@ export class PaymentController {
     private prisma: PrismaService,
     private cloudinaryService: CloudinaryService,
   ) {}
+
+  // ======================================================
+  // USER-SIDE: VIEW COMPANY PAYMENT DETAILS
+  // ======================================================
 
   /**
    * Get company payment details for a specific property.
@@ -105,6 +112,10 @@ export class PaymentController {
     };
   }
 
+  // ======================================================
+  // ADMIN/SUPER_ADMIN: UPLOAD PAYMENT PROOF
+  // ======================================================
+
   @Post('upload-proof')
   @UseInterceptors(FileInterceptor('file'))
   async uploadPaymentProof(
@@ -121,12 +132,114 @@ export class PaymentController {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
+
     const url = await this.cloudinaryService.uploadImage(file);
     return { url };
   }
 
+  // ======================================================
+  // ADMIN/SUPER_ADMIN: VIEW PAYMENTS
+  // ======================================================
 
-  // ================== FINANCE TEAM ENDPOINTS (SUPER_ADMIN) ==================
+  /**
+   * Get payments for admin/superadmin:
+   * - ADMIN: payments related to properties they created
+   * - SUPER_ADMIN: all payments
+   *
+   * GET /payment/admin
+   */
+  @Get('admin')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  async getAdminPayments(@Req() req) {
+    const user = req.user as { id: string; role: Role };
+
+    if (user.role === Role.SUPER_ADMIN) {
+      // SUPER_ADMIN sees everything
+      return this.prisma.payment.findMany({
+        include: {
+          property: {
+            select: {
+              id: true,
+              title: true,
+              location: true,
+              category: true,
+              status: true,
+              images: true,
+            },
+          },
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+            },
+          },
+          sale: {
+            select: {
+              id: true,
+              amount: true,
+              status: true,
+              isRental: true,
+              rentalMonths: true,
+              rentalStartDate: true,
+              rentalEndDate: true,
+              financeStatus: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    // ADMIN: only payments related to properties they created
+    return this.prisma.payment.findMany({
+      where: {
+        property: {
+          createdBy: user.id,
+        },
+      },
+      include: {
+        property: {
+          select: {
+            id: true,
+            title: true,
+            location: true,
+            category: true,
+            status: true,
+            images: true,
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+          },
+        },
+        sale: {
+          select: {
+            id: true,
+            amount: true,
+            status: true,
+            isRental: true,
+            rentalMonths: true,
+            rentalStartDate: true,
+            rentalEndDate: true,
+            financeStatus: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  // ======================================================
+  // FINANCE TEAM ENDPOINTS (SUPER_ADMIN)
+  // ======================================================
 
   /**
    * Get all pending payments for finance review
@@ -149,6 +262,9 @@ export class PaymentController {
             price: true,
             location: true,
             images: true,
+            category: true,
+            status: true,
+            rentDurationMonths: true,
           },
         },
         buyer: {
@@ -168,53 +284,148 @@ export class PaymentController {
             email: true,
           },
         },
+        payments: true,
       },
       orderBy: { createdAt: 'desc' },
     });
   }
 
   /**
-   * Finance approves a payment
+   * Finance approves a payment:
+   * - marks all payments for this sale as SUCCESS
+   * - confirms the sale
+   * - updates the property:
+   *    - FOR_RENT / SHORT_STAY -> RENTED + rentStartDate/rentEndDate
+   *    - FOR_SALE -> SOLD
+   *
    * PATCH /payment/:saleId/finance-approve
    * SUPER_ADMIN only
    */
-  @Patch(':saleId/finance-approve')
-  @Roles(Role.SUPER_ADMIN)
-  async approvePayment(
-    @Req() req,
-    @Param('saleId') saleId: string,
-    @Body() body: { financeNote?: string },
-  ) {
-    const financeUser = req.user as { id: string; role: Role };
+ @Patch(':saleId/finance-approve')
+@Roles(Role.SUPER_ADMIN)
+async approvePayment(
+  @Req() req,
+  @Param('saleId') saleId: string,
+  @Body() body: { financeNote?: string },
+) {
+  const financeUser = req.user as { id: string; role: Role };
 
-    const sale = await this.prisma.sale.findUnique({ where: { id: saleId } });
-    if (!sale) throw new NotFoundException('Sale not found');
+  const sale = await this.prisma.sale.findUnique({
+    where: { id: saleId },
+    include: {
+      property: true,   // Item
+      payments: true,   // Payment[]
+    },
+  });
 
-    const updated = await this.prisma.sale.update({
-      where: { id: saleId },
-      data: {
-        financeStatus: FinanceStatus.CONFIRMED, // ✅ uses existing enum
-        status: SaleStatus.CONFIRMED, // ✅ sale is now confirmed
-        // reuse existing "notes" field to store finance comment
-        notes: body.financeNote ?? sale.notes ?? null,
-      },
-    });
+  if (!sale) throw new NotFoundException('Sale not found');
 
-    // Audit log with finance user
-    await this.prisma.auditLog.create({
-      data: {
-        userId: financeUser.id,
-        action: 'FINANCE_APPROVED_PAYMENT',
-        entityType: 'SALE',
-        entityId: saleId,
-        metadata: {
-          amount: sale.amount,
-        },
-      },
-    });
-
-    return updated;
+  const property = sale.property;
+  if (!property) {
+    throw new NotFoundException('Linked property not found');
   }
+
+  // Determine if this is a rental deal based on category or existing flag
+  const isRentalCategory =
+    property.category === ItemCategory.FOR_RENT ||
+    property.category === ItemCategory.SHORT_STAY;
+
+  const isRental = isRentalCategory || sale.isRental;
+
+  // -------- Rental date variables (keep Sale vs Item separate) --------
+
+  // For Sale table (rentalStartDate, rentalEndDate, rentalMonths)
+  let saleRentalStart: Date | null = null;
+  let saleRentalEnd: Date | null = null;
+  let saleRentalMonths: number | null = null;
+
+  // For Item table (rentStartDate, rentEndDate, rentDurationMonths)
+  let itemRentStart: Date | null = null;
+  let itemRentEnd: Date | null = null;
+  let itemRentDuration: number | null = null;
+
+  if (isRental) {
+    const now = new Date();
+
+    // Priority: sale.rentalMonths > property.rentDurationMonths > default 12
+    const months =
+      sale.rentalMonths ??
+      property.rentDurationMonths ??
+      12;
+
+    // Assign for Sale
+    saleRentalStart = now;
+    saleRentalEnd = new Date(now);
+    saleRentalEnd.setMonth(saleRentalEnd.getMonth() + months);
+    saleRentalMonths = months;
+
+    // Assign for Item
+    itemRentStart = now;
+    itemRentEnd = saleRentalEnd;
+    itemRentDuration = months;
+  }
+
+  // 1) Mark all payments for this sale as SUCCESS
+  await this.prisma.payment.updateMany({
+    where: { saleId },
+    data: {
+      status: PaymentStatus.SUCCESS,
+    },
+  });
+
+  // 2) Update Sale (rental* fields go here)
+  const updatedSale = await this.prisma.sale.update({
+    where: { id: saleId },
+    data: {
+      financeStatus: FinanceStatus.CONFIRMED,
+      status: SaleStatus.CONFIRMED,
+      isRental,
+      rentalMonths: saleRentalMonths,
+      rentalStartDate: saleRentalStart,
+      rentalEndDate: saleRentalEnd,
+      financeReviewedById: financeUser.id,
+      financeReviewedAt: new Date(),
+      notes: body.financeNote ?? sale.notes ?? null,
+    },
+  });
+
+  // 3) Update property (Item) status + rent countdown fields
+  const newItemStatus: ItemStatus = isRental
+    ? ItemStatus.RENTED
+    : ItemStatus.SOLD;
+
+  const updatedItem = await this.prisma.item.update({
+    where: { id: property.id },
+    data: {
+      status: newItemStatus,
+      rentStartDate: itemRentStart,
+      rentEndDate: itemRentEnd,
+      rentDurationMonths: itemRentDuration,
+      autoReopenAt: isRental ? itemRentEnd : null,
+    },
+  });
+
+  // 4) Audit log with finance user
+  await this.prisma.auditLog.create({
+    data: {
+      userId: financeUser.id,
+      action: 'FINANCE_APPROVED_PAYMENT',
+      entityType: 'SALE',
+      entityId: saleId,
+      metadata: {
+        amount: sale.amount,
+        isRental,
+        rentalMonths: itemRentDuration,
+      },
+    },
+  });
+
+  // Return sale + updated property snapshot
+  return {
+    sale: updatedSale,
+    property: updatedItem,
+  };
+}
 
   /**
    * Finance rejects a payment
@@ -283,7 +494,7 @@ export class PaymentController {
       where: { id: saleId },
       data: {
         companyAccountPaid: true,
-        // ❌ no companyPaidAt field in schema, so we don't set it
+        // no companyPaidAt field in schema, but we log paidAt in audit
       },
     });
 

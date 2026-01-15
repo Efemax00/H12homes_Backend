@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "Item" ADD COLUMN     "agentCommissionPercent" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN     "companyCommissionPercent" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN     "ownerCommissionPercent" DOUBLE PRECISION NOT NULL DEFAULT 0;

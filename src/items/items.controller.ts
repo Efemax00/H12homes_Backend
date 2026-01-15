@@ -32,6 +32,7 @@ export class ItemsController {
   // ============================
   @Get()
   getPublicItems() {
+    // Service now returns AVAILABLE + RENTED and excludes deleted
     return this.itemsService.getPublicItems();
   }
 
@@ -74,9 +75,12 @@ export class ItemsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch('admin/:id')
-  adminUpdate(@Param('id') id: string, @Body() dto: UpdateItemDto, @Req() req) {
+  adminUpdate(
+    @Param('id') id: string,
+    @Body() dto: UpdateItemDto,
+    @Req() req,
+  ) {
     const user = req.user as { id: string; role: Role };
-
     return this.itemsService.adminUpdateItem(id, dto, user.id, user.role);
   }
 
@@ -89,7 +93,6 @@ export class ItemsController {
     @Body('reason') reason?: string,
   ) {
     const user = req.user as { id: string; role: Role };
-
     return this.itemsService.adminDeleteItem(id, user.id, user.role, reason);
   }
 
@@ -112,7 +115,6 @@ export class ItemsController {
   @Patch('admin/:id/feature')
   adminFeature(@Param('id') id: string, @Req() req) {
     const user = req.user as { id: string; role: Role };
-
     return this.itemsService.adminFeatureItem(id, user.id, user.role);
   }
 
@@ -121,7 +123,6 @@ export class ItemsController {
   @Patch('admin/:id/unfeature')
   adminUnfeature(@Param('id') id: string, @Req() req) {
     const user = req.user as { id: string; role: Role };
-
     return this.itemsService.adminUnfeatureItem(id, user.id, user.role);
   }
 
@@ -165,21 +166,25 @@ export class ItemsController {
     @Req() req,
     @UploadedFiles() files: Express.Multer.File[],
   ) {
-    // ... your existing create logic
-    const processedDto = {
-      ...dto,
-      price: parseFloat(dto.price as any),
-      bedrooms: dto.bedrooms ? parseInt(dto.bedrooms as any) : undefined,
-      bathrooms: dto.bathrooms ? parseInt(dto.bathrooms as any) : undefined,
-      sqft: dto.sqft ? parseFloat(dto.sqft as any) : undefined,
-    };
+    if (!files || files.length === 0) {
+      throw new BadRequestException('At least one image is required');
+    }
 
-    return this.itemsService.createItem(processedDto, req.user.id, files);
+    const user = req.user as { id: string };
+
+    // 👉 No manual parsing here – CreateItemDto + @Transform handles:
+    // price, bedrooms, bathrooms, sqft, commissions, rentDurationMonths, etc.
+    return this.itemsService.createItem(dto, user.id, files);
   }
 
   @UseGuards(JwtAuthGuard)
   @Patch(':id')
-  updateOwn(@Param('id') id: string, @Body() dto: UpdateItemDto, @Req() req) {
-    return this.itemsService.updateOwnItem(id, dto, req.user.id);
+  updateOwn(
+    @Param('id') id: string,
+    @Body() dto: UpdateItemDto,
+    @Req() req,
+  ) {
+    const user = req.user as { id: string };
+    return this.itemsService.updateOwnItem(id, dto, user.id);
   }
 }

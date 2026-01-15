@@ -113,6 +113,12 @@ model Item {
   views       PropertyView[]        @relation("PropertyViews")
   engagements PropertyEngagement[]  @relation("PropertyEngagements")
 
+  agentCommissionPercent   Float @default(0) 
+  companyCommissionPercent Float @default(0) 
+
+  
+  ownerCommissionPercent Float @default(0) 
+
   // NEW: payments related to this property
   payments    Payment[]
 

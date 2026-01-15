@@ -5,9 +5,14 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import {
+  ItemStatus,
+  Role,
+  ItemCategory,
+  ItemType,
+} from '@prisma/client';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
-import { ItemStatus, Role } from '@prisma/client';
 
 @Injectable()
 export class ItemsService {
@@ -21,11 +26,14 @@ export class ItemsService {
   // ======================
 
   // Homepage / Listing (featured first) - EXCLUDE DELETED
+  // ⬇️ Now shows AVAILABLE + RENTED so rented properties don't vanish
   async getPublicItems() {
     return this.prisma.item.findMany({
       where: {
-        status: ItemStatus.AVAILABLE,
         isDeleted: false,
+        status: {
+          in: [ItemStatus.AVAILABLE, ItemStatus.RENTED],
+        },
       },
       include: {
         images: true,
@@ -39,7 +47,7 @@ export class ItemsService {
     });
   }
 
-  // Item details page (even SOLD) - EXCLUDE DELETED
+  // Item details page (even SOLD/RENTED) - EXCLUDE DELETED
   async getItemById(id: string) {
     const item = await this.prisma.item.findUnique({
       where: { id },
@@ -207,11 +215,48 @@ export class ItemsService {
 
     const item = await this.prisma.item.create({
       data: {
-        ...dto,
-        ownerId: userId,
-        createdBy: userId,
+        // Core fields
+        title: dto.title,
+        shortDesc: dto.shortDesc,
+        longDesc: dto.longDesc,
+        dos: dto.dos,
+        donts: dto.donts,
+        price: dto.price,
+        location: dto.location,
+        contactInfo: dto.contactInfo ?? null,
+
+        // Enums
+        category: dto.category as ItemCategory,
+        itemType: dto.itemType as ItemType,
+
+        // Status / featured
+        // New items start in PENDING review (from your current logic)
         status: ItemStatus.PENDING,
         isFeatured: false,
+
+        // Property details
+        bedrooms: dto.bedrooms ?? null,
+        bathrooms: dto.bathrooms ?? null,
+        sqft: dto.sqft ?? null,
+        propertyType: dto.propertyType ?? null,
+
+        // Rent configuration (for future countdown)
+        rentDurationMonths: dto.rentDurationMonths ?? null,
+        rentStartDate: null,
+        rentEndDate: null,
+        autoReopenAt: null,
+
+        // Commissions (from your updated DTO + model)
+        agentCommissionPercent: dto.agentCommissionPercent ?? 0,
+        companyCommissionPercent: dto.companyCommissionPercent ?? 0,
+        // You can compute ownerCommissionPercent later from the sale if needed
+        ownerCommissionPercent: 0,
+
+        // Ownership
+        ownerId: userId,
+        createdBy: userId,
+
+        // Images
         images: {
           create: imageUrls.map((url, index) => ({
             url,
@@ -255,7 +300,15 @@ export class ItemsService {
     // Users cannot mark their own items as featured
     if ('isFeatured' in dto) delete (dto as any).isFeatured;
 
-    return this.prisma.item.update({ where: { id: itemId }, data: dto });
+    // If you also want to prevent normal users from editing commissions, you can do:
+    // delete (dto as any).agentCommissionPercent;
+    // delete (dto as any).companyCommissionPercent;
+    // delete (dto as any).ownerCommissionPercent;
+
+    return this.prisma.item.update({
+      where: { id: itemId },
+      data: dto,
+    });
   }
 
   async searchItems(
@@ -267,8 +320,10 @@ export class ItemsService {
     location?: string,
   ) {
     const where: any = {
-      status: ItemStatus.AVAILABLE,
       isDeleted: false,
+      status: {
+        in: [ItemStatus.AVAILABLE, ItemStatus.RENTED],
+      },
     };
 
     // Text search
@@ -285,11 +340,15 @@ export class ItemsService {
       where.location = { contains: location, mode: 'insensitive' };
     }
 
-    // Category filter
-    if (category) where.category = category;
+    // Category filter (ItemCategory enum string)
+    if (category) {
+      where.category = category as ItemCategory;
+    }
 
-    // Item type filter
-    if (itemType) where.itemType = itemType;
+    // Item type filter (ItemType enum string)
+    if (itemType) {
+      where.itemType = itemType as ItemType;
+    }
 
     // Price range filter
     if (minPrice !== undefined || maxPrice !== undefined) {
@@ -401,7 +460,10 @@ export class ItemsService {
 
     return this.prisma.item.update({
       where: { id },
-      data: { isFeatured: true, status: ItemStatus.AVAILABLE },
+      data: {
+        isFeatured: true,
+        status: ItemStatus.AVAILABLE,
+      },
     });
   }
 
