@@ -1,4 +1,3 @@
-// src/payment/payment.controller.ts
 import {
   Controller,
   Get,
@@ -10,11 +9,17 @@ import {
   ForbiddenException,
   NotFoundException,
   InternalServerErrorException,
+  Post,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import {
   Role,
   InterestStatus,
@@ -25,7 +30,10 @@ import {
 @Controller('payment')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PaymentController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private cloudinaryService: CloudinaryService,
+  ) {}
 
   /**
    * Get company payment details for a specific property.
@@ -79,7 +87,11 @@ export class PaymentController {
       COMPANY_PAYMENT_INSTRUCTIONS,
     } = process.env;
 
-    if (!COMPANY_BANK_NAME || !COMPANY_ACCOUNT_NAME || !COMPANY_ACCOUNT_NUMBER) {
+    if (
+      !COMPANY_BANK_NAME ||
+      !COMPANY_ACCOUNT_NAME ||
+      !COMPANY_ACCOUNT_NUMBER
+    ) {
       throw new InternalServerErrorException(
         'Company payment details are not configured. Please contact support.',
       );
@@ -92,6 +104,27 @@ export class PaymentController {
       instructions: COMPANY_PAYMENT_INSTRUCTIONS ?? '',
     };
   }
+
+  @Post('upload-proof')
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadPaymentProof(
+    @Req() req,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const user = req.user as { id: string; role: Role };
+
+    // Optional: restrict to admins / super admins
+    if (user.role !== Role.ADMIN && user.role !== Role.SUPER_ADMIN) {
+      throw new ForbiddenException('Only admins can upload payment proof');
+    }
+
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+    const url = await this.cloudinaryService.uploadImage(file);
+    return { url };
+  }
+
 
   // ================== FINANCE TEAM ENDPOINTS (SUPER_ADMIN) ==================
 
@@ -161,7 +194,7 @@ export class PaymentController {
       where: { id: saleId },
       data: {
         financeStatus: FinanceStatus.CONFIRMED, // ✅ uses existing enum
-        status: SaleStatus.CONFIRMED,           // ✅ sale is now confirmed
+        status: SaleStatus.CONFIRMED, // ✅ sale is now confirmed
         // reuse existing "notes" field to store finance comment
         notes: body.financeNote ?? sale.notes ?? null,
       },
