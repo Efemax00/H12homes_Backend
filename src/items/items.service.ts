@@ -2,15 +2,11 @@ import {
   Injectable,
   ForbiddenException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import {
-  ItemStatus,
-  Role,
-  ItemCategory,
-  ItemType,
-} from '@prisma/client';
+import { ItemStatus, Role, ItemCategory, ItemType } from '@prisma/client';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 
@@ -99,11 +95,7 @@ export class ItemsService {
   }
 
   // ✅ Get items by status, but scoped by admin
-  async getItemsByStatus(
-    adminId: string,
-    role: Role,
-    status: ItemStatus,
-  ) {
+  async getItemsByStatus(adminId: string, role: Role, status: ItemStatus) {
     const base: any = {
       status,
       isDeleted: false,
@@ -194,6 +186,8 @@ export class ItemsService {
   // USER ROUTES (AUTH REQUIRED)
   // ======================
 
+  // Create a new item
+
   async createItem(
     dto: CreateItemDto,
     userId: string,
@@ -213,6 +207,79 @@ export class ItemsService {
 
     console.log('📸 All image URLs:', imageUrls);
 
+    // 🔢 ---- NUMERIC CONVERSIONS ----
+
+    // price (required)
+    // price (required)
+    const price =
+      dto.price !== undefined && dto.price !== null ? Number(dto.price) : 0;
+
+    if (Number.isNaN(price)) {
+      throw new BadRequestException('Invalid price value');
+    }
+
+    // bedrooms (optional)
+    const bedrooms =
+      dto.bedrooms !== undefined && dto.bedrooms !== null
+        ? Number(dto.bedrooms)
+        : null;
+
+    if (bedrooms !== null && Number.isNaN(bedrooms)) {
+      throw new BadRequestException('Invalid bedrooms value');
+    }
+
+    // bathrooms (optional)
+    const bathrooms =
+      dto.bathrooms !== undefined && dto.bathrooms !== null
+        ? Number(dto.bathrooms)
+        : null;
+
+    if (bathrooms !== null && Number.isNaN(bathrooms)) {
+      throw new BadRequestException('Invalid bathrooms value');
+    }
+
+    // sqft (optional)
+    const sqft =
+      dto.sqft !== undefined && dto.sqft !== null ? Number(dto.sqft) : null;
+
+    if (sqft !== null && Number.isNaN(sqft)) {
+      throw new BadRequestException('Invalid sqft value');
+    }
+
+    // rentDurationMonths (optional)
+    const rentDurationMonths =
+      dto.rentDurationMonths !== undefined && dto.rentDurationMonths !== null
+        ? Number(dto.rentDurationMonths)
+        : null;
+
+    if (rentDurationMonths !== null && Number.isNaN(rentDurationMonths)) {
+      throw new BadRequestException('Invalid rentDurationMonths value');
+    }
+
+    // commissions (can come as strings too)
+    const agentCommissionPercent =
+      dto.agentCommissionPercent !== undefined &&
+      dto.agentCommissionPercent !== null
+        ? Number(dto.agentCommissionPercent)
+        : 0;
+
+    if (Number.isNaN(agentCommissionPercent)) {
+      throw new BadRequestException('Invalid agentCommissionPercent value');
+    }
+
+    const companyCommissionPercent =
+      dto.companyCommissionPercent !== undefined &&
+      dto.companyCommissionPercent !== null
+        ? Number(dto.companyCommissionPercent)
+        : 0;
+
+    if (Number.isNaN(companyCommissionPercent)) {
+      throw new BadRequestException('Invalid companyCommissionPercent value');
+    }
+
+    const ownerCommissionPercent = 0;
+
+    // 🔥 ---- PRISMA CALL (now using parsed numbers) ----
     const item = await this.prisma.item.create({
       data: {
         // Core fields
@@ -221,7 +288,7 @@ export class ItemsService {
         longDesc: dto.longDesc,
         dos: dto.dos,
         donts: dto.donts,
-        price: dto.price,
+        price, // ✅ Float
         location: dto.location,
         contactInfo: dto.contactInfo ?? null,
 
@@ -230,27 +297,25 @@ export class ItemsService {
         itemType: dto.itemType as ItemType,
 
         // Status / featured
-        // New items start in PENDING review (from your current logic)
         status: ItemStatus.PENDING,
         isFeatured: false,
 
         // Property details
-        bedrooms: dto.bedrooms ?? null,
-        bathrooms: dto.bathrooms ?? null,
-        sqft: dto.sqft ?? null,
+        bedrooms, // ✅ Int | null
+        bathrooms, // ✅ Int | null
+        sqft, // ✅ Float | null
         propertyType: dto.propertyType ?? null,
 
-        // Rent configuration (for future countdown)
-        rentDurationMonths: dto.rentDurationMonths ?? null,
+        // Rent configuration
+        rentDurationMonths, // ✅ Int | null
         rentStartDate: null,
         rentEndDate: null,
         autoReopenAt: null,
 
-        // Commissions (from your updated DTO + model)
-        agentCommissionPercent: dto.agentCommissionPercent ?? 0,
-        companyCommissionPercent: dto.companyCommissionPercent ?? 0,
-        // You can compute ownerCommissionPercent later from the sale if needed
-        ownerCommissionPercent: 0,
+        // Commissions
+        agentCommissionPercent, // ✅ Float
+        companyCommissionPercent, // ✅ Float
+        ownerCommissionPercent, // ✅ Float
 
         // Ownership
         ownerId: userId,
@@ -281,12 +346,9 @@ export class ItemsService {
     console.log('✅ Item created successfully:', item.id);
     return item;
   }
+  
 
-  async updateOwnItem(
-    itemId: string,
-    dto: UpdateItemDto,
-    userId: string,
-  ) {
+  async updateOwnItem(itemId: string, dto: UpdateItemDto, userId: string) {
     const item = await this.prisma.item.findUnique({ where: { id: itemId } });
 
     if (!item || item.ownerId !== userId) {
@@ -446,16 +508,14 @@ export class ItemsService {
   }
 
   // Feature / unfeature with ownership check
-  async adminFeatureItem(
-    id: string,
-    adminId: string,
-    role: Role,
-  ) {
+  async adminFeatureItem(id: string, adminId: string, role: Role) {
     const item = await this.prisma.item.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Item not found');
 
     if (role !== Role.SUPER_ADMIN && item.createdBy !== adminId) {
-      throw new ForbiddenException('You cannot feature another admin’s listing');
+      throw new ForbiddenException(
+        'You cannot feature another admin’s listing',
+      );
     }
 
     return this.prisma.item.update({
@@ -467,11 +527,7 @@ export class ItemsService {
     });
   }
 
-  async adminUnfeatureItem(
-    id: string,
-    adminId: string,
-    role: Role,
-  ) {
+  async adminUnfeatureItem(id: string, adminId: string, role: Role) {
     const item = await this.prisma.item.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Item not found');
 
