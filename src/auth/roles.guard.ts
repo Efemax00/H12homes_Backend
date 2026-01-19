@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Role } from '@prisma/client';
 
@@ -20,7 +20,13 @@ export class RolesGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const user = request.user; // comes from JwtAuthGuard
 
-    if (!user || !requiredRoles.includes(user.role)) {
+    // User should exist (JwtAuthGuard should catch this, but just in case)
+    if (!user) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    // Check if user has one of the required roles
+    if (!requiredRoles.includes(user.role)) {
       throw new ForbiddenException('You do not have permission to access this resource');
     }
 

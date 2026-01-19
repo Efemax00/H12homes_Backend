@@ -15,10 +15,26 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { Role, MessageType, PaymentMethod } from '@prisma/client';
+import { TermsService } from '../terms/terms.service';
+import { Request } from 'express';
+
+// Strongly typed auth user on req
+interface AuthUser {
+  id: string;
+  email: string;
+  role: Role;
+}
+
+interface AuthenticatedRequest extends Request {
+  user: AuthUser;
+}
 
 @Controller('messages')
 export class MessagesController {
-  constructor(private messagesService: MessagesService) {}
+  constructor(
+    private readonly messagesService: MessagesService,
+    private readonly termsService: TermsService,
+  ) {}
 
   // ==================== INTEREST ENDPOINTS ====================
 
@@ -28,17 +44,37 @@ export class MessagesController {
    */
   @UseGuards(JwtAuthGuard)
   @Post('interest/:propertyId')
-  async expressInterest(@Req() req, @Param('propertyId') propertyId: string) {
-    return this.messagesService.expressInterest(req.user.id, propertyId);
+  async expressInterest(
+    @Req() req: AuthenticatedRequest,
+    @Param('propertyId') propertyId: string,
+  ) {
+    const userId = req.user.id;
+
+    // ✅ Enforce Terms + Quiz before allowing chat
+    const hasAgreed = await this.termsService.hasUserAgreedForProperty(
+      userId,
+      propertyId,
+    );
+
+    if (!hasAgreed) {
+      // Frontend can check error.response.data.code === 'TERMS_NOT_ACCEPTED'
+      throw new ForbiddenException({
+        code: 'TERMS_NOT_ACCEPTED',
+        message:
+          'You must read and accept the rental safety terms and pass the short quiz before chatting about this property.',
+      });
+    }
+
+    return this.messagesService.expressInterest(userId, propertyId);
   }
 
-   /**
+  /**
    * Get logged-in user's conversations (buyer/user side)
    * GET /messages/my-user-conversations
    */
   @UseGuards(JwtAuthGuard)
   @Get('my-user-conversations')
-  async getMyUserConversations(@Req() req) {
+  async getMyUserConversations(@Req() req: AuthenticatedRequest) {
     return this.messagesService.getUserConversations(req.user.id);
   }
 
@@ -49,7 +85,10 @@ export class MessagesController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('property/:propertyId/interests')
-  async getPropertyInterests(@Req() req, @Param('propertyId') propertyId: string) {
+  async getPropertyInterests(
+    @Req() req: AuthenticatedRequest,
+    @Param('propertyId') propertyId: string,
+  ) {
     return this.messagesService.getPropertyInterests(propertyId, req.user.id);
   }
 
@@ -59,7 +98,7 @@ export class MessagesController {
    */
   @UseGuards(JwtAuthGuard)
   @Get('my-interests')
-  async getMyInterests(@Req() req) {
+  async getMyInterests(@Req() req: AuthenticatedRequest) {
     return this.messagesService.getUserInterests(req.user.id);
   }
 
@@ -72,7 +111,7 @@ export class MessagesController {
   @UseGuards(JwtAuthGuard)
   @Post('send')
   async sendMessage(
-    @Req() req,
+    @Req() req: AuthenticatedRequest,
     @Body()
     body: {
       propertyId: string;
@@ -96,7 +135,10 @@ export class MessagesController {
    */
   @UseGuards(JwtAuthGuard)
   @Get('chat/:propertyId')
-  async getChatHistory(@Req() req, @Param('propertyId') propertyId: string) {
+  async getChatHistory(
+    @Req() req: AuthenticatedRequest,
+    @Param('propertyId') propertyId: string,
+  ) {
     return this.messagesService.getChatHistory(propertyId, req.user.id);
   }
 
@@ -107,7 +149,7 @@ export class MessagesController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('my-conversations')
-  async getMyConversations(@Req() req) {
+  async getMyConversations(@Req() req: AuthenticatedRequest) {
     if (req.user.role === Role.SUPER_ADMIN) {
       // Super admin can see all
       return this.messagesService.getAllConversations();
@@ -134,32 +176,32 @@ export class MessagesController {
    * POST /messages/mark-sold
    */
   @Post('mark-sold')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.ADMIN, Role.SUPER_ADMIN)
-async markAsSold(
-  @Req() req,
-  @Body()
-  body: {
-    propertyId: string;
-    buyerId: string;
-    amount: number;
-    paymentProofUrl?: string;
-    mode?: 'SALE' | 'RENT';
-    rentDurationMonths?: number;
-    notes?: string;
-  },
-) {
-  return this.messagesService.markAsSold(
-    req.user.id,
-    body.propertyId,
-    body.buyerId,
-    body.amount,
-    body.paymentProofUrl,
-    body.mode,              // optional, defaults to 'SALE'
-    body.rentDurationMonths,
-    body.notes,
-  );
-}
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  async markAsSold(
+    @Req() req: AuthenticatedRequest,
+    @Body()
+    body: {
+      propertyId: string;
+      buyerId: string;
+      amount: number;
+      paymentProofUrl?: string;
+      mode?: 'SALE' | 'RENT';
+      rentDurationMonths?: number;
+      notes?: string;
+    },
+  ) {
+    return this.messagesService.markAsSold(
+      req.user.id,
+      body.propertyId,
+      body.buyerId,
+      body.amount,
+      body.paymentProofUrl,
+      body.mode, // optional, defaults to 'SALE'
+      body.rentDurationMonths,
+      body.notes,
+    );
+  }
 
   /**
    * Get admin's sales history
@@ -168,7 +210,7 @@ async markAsSold(
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('my-sales')
-  async getMySales(@Req() req) {
+  async getMySales(@Req() req: AuthenticatedRequest) {
     if (req.user.role === Role.SUPER_ADMIN) {
       // Super admin can see all sales
       return this.messagesService.getAllSales();

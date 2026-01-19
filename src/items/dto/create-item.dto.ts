@@ -3,8 +3,6 @@ import {
   IsNumber,
   IsOptional,
   IsEnum,
-  Min,
-  Max,
   IsBoolean,
   IsInt,
   IsNotEmpty,
@@ -34,7 +32,9 @@ export class CreateItemDto {
   donts?: string;
 
   // Because of form-data, price comes as string → number
-  @Transform(({ value }) => (value !== undefined ? parseFloat(value) : undefined))
+  @Transform(({ value }) =>
+    value !== undefined && value !== '' ? parseFloat(value) : undefined,
+  )
   @IsNumber()
   price: number;
 
@@ -48,7 +48,7 @@ export class CreateItemDto {
 
   @IsOptional()
   @IsEnum(ItemStatus)
-  status?: ItemStatus; // usually defaulted in service
+  status?: ItemStatus; // still optional, but usually overridden in service
 
   @IsOptional()
   @IsBoolean()
@@ -83,26 +83,6 @@ export class CreateItemDto {
   @IsNumber()
   sqft?: number;
 
-  // ---------- Commissions ----------
-
-  @Transform(({ value }) =>
-    value !== undefined && value !== '' ? parseInt(value, 10) : undefined,
-  )
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  agentCommissionPercent?: number;
-
-  @Transform(({ value }) =>
-    value !== undefined && value !== '' ? parseInt(value, 10) : undefined,
-  )
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  companyCommissionPercent?: number;
-
   @IsOptional()
   @IsString()
   propertyType?: string; // Duplex, Apartment, Flat, etc.
@@ -114,4 +94,34 @@ export class CreateItemDto {
   @IsOptional()
   @IsInt()
   rentDurationMonths?: number;
+
+  // ---------- Landlord details (agent fills this) ----------
+
+  @IsOptional()
+  @IsString()
+  landlordFullName?: string;
+
+  @IsOptional()
+  @IsString()
+  landlordPhone?: string;
+
+  @IsOptional()
+  @IsString()
+  landlordEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  landlordAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  landlordBankName?: string;
+
+  @IsOptional()
+  @IsString()
+  landlordAccountNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  landlordAccountName?: string;
 }

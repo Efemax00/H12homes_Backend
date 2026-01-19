@@ -3,9 +3,10 @@ import { Module } from '@nestjs/common';
 import { MessagesController } from '../messages/message.controller';
 import { MessagesService } from '../messages/message.service';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { TermsModule } from '../terms/terms.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, TermsModule],
   controllers: [MessagesController],
   providers: [MessagesService],
   exports: [MessagesService],

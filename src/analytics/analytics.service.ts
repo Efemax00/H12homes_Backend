@@ -1,7 +1,26 @@
 // src/analytics/analytics.service.ts
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { EngagementType } from '@prisma/client';
+import { EngagementType, Prisma } from '@prisma/client';
+
+// ✅ Define types for raw SQL query results
+export interface ViewsOverTimeResult {
+  date: Date;
+  views: bigint;
+  unique_views: bigint;
+}
+
+export interface PlatformViewsOverTimeResult {
+  date: Date;
+  views: bigint;
+  properties_viewed: bigint;
+}
+
+export interface SuspiciousActivityResult {
+  user_id: string | null;
+  ip_address: string | null;
+  view_count: bigint;
+}
 
 @Injectable()
 export class AnalyticsService {
@@ -125,7 +144,7 @@ export class AnalyticsService {
     propertyId: string,
     actionType: EngagementType,
     userId?: string,
-    metadata?: any,
+    metadata?: Prisma.InputJsonValue,  // ✅ Type-safe JSON type from Prisma
   ) {
     const engagement = await this.prisma.propertyEngagement.create({
       data: {
@@ -153,7 +172,7 @@ export class AnalyticsService {
         action: `ENGAGEMENT_${actionType}`,
         entityType: 'PROPERTY',
         entityId: propertyId,
-        metadata: { actionType, ...metadata },
+        metadata: metadata ? { actionType, ...(metadata as object) } : { actionType },
       },
     });
 
@@ -181,7 +200,7 @@ export class AnalyticsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const viewsOverTime = await this.prisma.$queryRaw`
+    const viewsOverTime = await this.prisma.$queryRaw<ViewsOverTimeResult[]>`
       SELECT 
         DATE(viewed_at) as date,
         COUNT(*) as views,
@@ -341,7 +360,7 @@ export class AnalyticsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const viewsOverTime = await this.prisma.$queryRaw`
+    const viewsOverTime = await this.prisma.$queryRaw<PlatformViewsOverTimeResult[]>`
       SELECT 
         DATE(viewed_at) as date,
         COUNT(*) as views,
@@ -370,7 +389,7 @@ export class AnalyticsService {
    */
   async detectSuspiciousActivity(propertyId: string) {
     // Check for view spam (same user/IP viewing too many times)
-    const recentViews = await this.prisma.$queryRaw`
+    const recentViews = await this.prisma.$queryRaw<SuspiciousActivityResult[]>`
       SELECT 
         user_id,
         ip_address,
@@ -380,7 +399,7 @@ export class AnalyticsService {
         AND viewed_at >= NOW() - INTERVAL '24 hours'
       GROUP BY user_id, ip_address
       HAVING COUNT(*) > 20
-    ` as Array<{ user_id: string | null; ip_address: string | null; view_count: number }>;
+    `;
 
     // Check for click farming (too many interests without messages)
     const interests = await this.prisma.propertyInterest.count({

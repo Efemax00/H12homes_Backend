@@ -13,6 +13,8 @@ import { ChatModule } from './chat/chat.module';
 import { MessagesModule } from './messages/message.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { PaymentModule } from './payment/payment.module';
+import { LandlordsModule } from './landlords/landlords.module';
+import { TermsModule } from './terms/terms.module';
 
 
 
@@ -49,6 +51,8 @@ import { PaymentModule } from './payment/payment.module';
     MessagesModule,
     AnalyticsModule,
     PaymentModule,
+    LandlordsModule,
+    TermsModule,
   ],
   controllers: [AppController],
   providers: [

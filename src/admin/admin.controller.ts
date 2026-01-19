@@ -12,7 +12,7 @@ export class AdminController {
   constructor(private adminService: AdminService) {}
 
   // Get all users (ADMIN and SUPER_ADMIN can access)
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN)
   @Get('users')
   async getUsers() {
     return this.adminService.getAllUsers();
@@ -29,14 +29,14 @@ export class AdminController {
   }
 
   // Feature item (ADMIN and SUPER_ADMIN can access)
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles( Role.SUPER_ADMIN)
   @Post('items/:id/feature')
   featureItem(@Param('id') id: string) {
     return this.adminService.featureItem(id);
   }
 
   // Unfeature item (ADMIN and SUPER_ADMIN can access)
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles( Role.SUPER_ADMIN)
   @Patch('items/:id/unfeature')
   unfeatureItem(@Param('id') id: string) {
     return this.adminService.unfeatureItem(id);

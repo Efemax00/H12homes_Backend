@@ -6,9 +6,10 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import { ItemStatus, Role, ItemCategory, ItemType } from '@prisma/client';
+import { ItemStatus, Role, ItemCategory, ItemType, Prisma, Landlord } from '@prisma/client';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
+import { COMMISSION_CONFIG } from '../config/commission.config';
 
 @Injectable()
 export class ItemsService {
@@ -67,7 +68,7 @@ export class ItemsService {
 
   // ✅ Only my items if ADMIN, all if SUPER_ADMIN
   async getAllItemsWithAdmin(adminId: string, role: Role) {
-    const where =
+    const where: Prisma.ItemWhereInput =
       role === Role.SUPER_ADMIN
         ? { isDeleted: false }
         : {
@@ -96,12 +97,12 @@ export class ItemsService {
 
   // ✅ Get items by status, but scoped by admin
   async getItemsByStatus(adminId: string, role: Role, status: ItemStatus) {
-    const base: any = {
+    const base: Prisma.ItemWhereInput = {  // ✅ Type-safe!
       status,
       isDeleted: false,
     };
 
-    const where =
+    const where: Prisma.ItemWhereInput =
       role === Role.SUPER_ADMIN
         ? base
         : {
@@ -129,12 +130,12 @@ export class ItemsService {
 
   // ✅ Get unfeatured items (scoped)
   async getUnfeaturedItems(adminId: string, role: Role) {
-    const base: any = {
+    const base: Prisma.ItemWhereInput = {  // ✅ Type-safe!
       isFeatured: false,
       isDeleted: false,
     };
 
-    const where =
+    const where: Prisma.ItemWhereInput =
       role === Role.SUPER_ADMIN
         ? base
         : {
@@ -187,166 +188,224 @@ export class ItemsService {
   // ======================
 
   // Create a new item
+async createItem(
+  dto: CreateItemDto,
+  userId: string,
+  files: Express.Multer.File[],
+) {
+  console.log('📝 Creating item with dto:', dto);
+  console.log('📝 User ID:', userId);
+  console.log('📝 Files count:', files.length);
 
-  async createItem(
-    dto: CreateItemDto,
-    userId: string,
-    files: Express.Multer.File[],
-  ) {
-    console.log('📝 Creating item with dto:', dto);
-    console.log('📝 User ID:', userId);
-    console.log('📝 Files count:', files.length);
+  const imageUrls: string[] = [];
 
-    const imageUrls: string[] = [];
+  for (const file of files) {
+    const url = await this.cloudinaryService.uploadPropertyImage(file);
+    console.log('📸 Uploaded image:', url);
+    imageUrls.push(url);
+  }
 
-    for (const file of files) {
-      const url = await this.cloudinaryService.uploadPropertyImage(file);
-      console.log('📸 Uploaded image:', url);
-      imageUrls.push(url);
-    }
+  console.log('📸 All image URLs:', imageUrls);
 
-    console.log('📸 All image URLs:', imageUrls);
+  // 🔢 ---- NUMERIC CONVERSIONS ----
 
-    // 🔢 ---- NUMERIC CONVERSIONS ----
+  // price (required)
+  const price =
+    dto.price !== undefined && dto.price !== null ? Number(dto.price) : 0;
 
-    // price (required)
-    // price (required)
-    const price =
-      dto.price !== undefined && dto.price !== null ? Number(dto.price) : 0;
+  if (Number.isNaN(price)) {
+    throw new BadRequestException('Invalid price value');
+  }
 
-    if (Number.isNaN(price)) {
-      throw new BadRequestException('Invalid price value');
-    }
+  // bedrooms (optional)
+  const bedrooms =
+    dto.bedrooms !== undefined && dto.bedrooms !== null
+      ? Number(dto.bedrooms)
+      : null;
 
-    // bedrooms (optional)
-    const bedrooms =
-      dto.bedrooms !== undefined && dto.bedrooms !== null
-        ? Number(dto.bedrooms)
-        : null;
+  if (bedrooms !== null && Number.isNaN(bedrooms)) {
+    throw new BadRequestException('Invalid bedrooms value');
+  }
 
-    if (bedrooms !== null && Number.isNaN(bedrooms)) {
-      throw new BadRequestException('Invalid bedrooms value');
-    }
+  // bathrooms (optional)
+  const bathrooms =
+    dto.bathrooms !== undefined && dto.bathrooms !== null
+      ? Number(dto.bathrooms)
+      : null;
 
-    // bathrooms (optional)
-    const bathrooms =
-      dto.bathrooms !== undefined && dto.bathrooms !== null
-        ? Number(dto.bathrooms)
-        : null;
+  if (bathrooms !== null && Number.isNaN(bathrooms)) {
+    throw new BadRequestException('Invalid bathrooms value');
+  }
 
-    if (bathrooms !== null && Number.isNaN(bathrooms)) {
-      throw new BadRequestException('Invalid bathrooms value');
-    }
+  // sqft (optional)
+  const sqft =
+    dto.sqft !== undefined && dto.sqft !== null ? Number(dto.sqft) : null;
 
-    // sqft (optional)
-    const sqft =
-      dto.sqft !== undefined && dto.sqft !== null ? Number(dto.sqft) : null;
+  if (sqft !== null && Number.isNaN(sqft)) {
+    throw new BadRequestException('Invalid sqft value');
+  }
 
-    if (sqft !== null && Number.isNaN(sqft)) {
-      throw new BadRequestException('Invalid sqft value');
-    }
+  // rentDurationMonths (optional)
+  const rentDurationMonths =
+    dto.rentDurationMonths !== undefined && dto.rentDurationMonths !== null
+      ? Number(dto.rentDurationMonths)
+      : null;
 
-    // rentDurationMonths (optional)
-    const rentDurationMonths =
-      dto.rentDurationMonths !== undefined && dto.rentDurationMonths !== null
-        ? Number(dto.rentDurationMonths)
-        : null;
+  if (rentDurationMonths !== null && Number.isNaN(rentDurationMonths)) {
+    throw new BadRequestException('Invalid rentDurationMonths value');
+  }
 
-    if (rentDurationMonths !== null && Number.isNaN(rentDurationMonths)) {
-      throw new BadRequestException('Invalid rentDurationMonths value');
-    }
+  // 💰 ---- COMMISSION CONFIG (platform-fixed) ----
+  const agentCommissionPercent = COMMISSION_CONFIG.AGENT_SHARE_PERCENT;
+  const companyCommissionPercent = COMMISSION_CONFIG.COMPANY_SHARE_PERCENT;
+  const platformFeePercent = COMMISSION_CONFIG.PLATFORM_FEE_PERCENT;
 
-    // commissions (can come as strings too)
-    const agentCommissionPercent =
-      dto.agentCommissionPercent !== undefined &&
-      dto.agentCommissionPercent !== null
-        ? Number(dto.agentCommissionPercent)
-        : 0;
+  // 🧑‍💼 ---- LANDLORD (from DTO) ----
+  const {
+    landlordFullName,
+    landlordPhone,
+    landlordEmail,
+    landlordAddress,
+    landlordBankName,
+    landlordAccountNumber,
+    landlordAccountName,
+  } = dto;
 
-    if (Number.isNaN(agentCommissionPercent)) {
-      throw new BadRequestException('Invalid agentCommissionPercent value');
-    }
+  const hasLandlordDetails =
+    (landlordFullName && landlordFullName.trim().length > 0) ||
+    landlordPhone ||
+    landlordEmail ||
+    landlordBankName ||
+    landlordAccountNumber ||
+    landlordAccountName;
 
-    const companyCommissionPercent =
-      dto.companyCommissionPercent !== undefined &&
-      dto.companyCommissionPercent !== null
-        ? Number(dto.companyCommissionPercent)
-        : 0;
+  let landlordRecord: Landlord | null = null;
 
-    if (Number.isNaN(companyCommissionPercent)) {
-      throw new BadRequestException('Invalid companyCommissionPercent value');
-    }
-
-    const ownerCommissionPercent = 0;
-
-    // 🔥 ---- PRISMA CALL (now using parsed numbers) ----
-    const item = await this.prisma.item.create({
-      data: {
-        // Core fields
-        title: dto.title,
-        shortDesc: dto.shortDesc,
-        longDesc: dto.longDesc,
-        dos: dto.dos,
-        donts: dto.donts,
-        price, // ✅ Float
-        location: dto.location,
-        contactInfo: dto.contactInfo ?? null,
-
-        // Enums
-        category: dto.category as ItemCategory,
-        itemType: dto.itemType as ItemType,
-
-        // Status / featured
-        status: ItemStatus.PENDING,
-        isFeatured: false,
-
-        // Property details
-        bedrooms, // ✅ Int | null
-        bathrooms, // ✅ Int | null
-        sqft, // ✅ Float | null
-        propertyType: dto.propertyType ?? null,
-
-        // Rent configuration
-        rentDurationMonths, // ✅ Int | null
-        rentStartDate: null,
-        rentEndDate: null,
-        autoReopenAt: null,
-
-        // Commissions
-        agentCommissionPercent, // ✅ Float
-        companyCommissionPercent, // ✅ Float
-        ownerCommissionPercent, // ✅ Float
-
-        // Ownership
-        ownerId: userId,
-        createdBy: userId,
-
-        // Images
-        images: {
-          create: imageUrls.map((url, index) => ({
-            url,
-            order: index,
-          })),
-        },
-      },
-      include: {
-        images: true,
-        createdByUser: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            avatarUrl: true,
-          },
-        },
+  if (hasLandlordDetails) {
+    // Try to reuse an existing landlord so we don't duplicate rows
+    landlordRecord = await this.prisma.landlord.findFirst({
+      where: {
+        ...(landlordFullName
+          ? { fullName: landlordFullName.trim() }
+          : {}),
+        ...(landlordPhone
+          ? { phone: landlordPhone.trim() }
+          : {}),
+        ...(landlordEmail
+          ? { email: landlordEmail.trim().toLowerCase() }
+          : {}),
+        ...(landlordAccountNumber
+          ? { accountNumber: landlordAccountNumber.trim() }
+          : {}),
       },
     });
 
-    console.log('✅ Item created successfully:', item.id);
-    return item;
+    if (!landlordRecord) {
+      landlordRecord = await this.prisma.landlord.create({
+        data: {
+          fullName:
+            landlordFullName && landlordFullName.trim().length > 0
+              ? landlordFullName.trim()
+              : 'Unknown landlord',
+          phone: landlordPhone?.trim() ?? null,
+          email: landlordEmail ? landlordEmail.trim().toLowerCase() : null,
+          address: landlordAddress?.trim() ?? null,
+          bankName: landlordBankName?.trim() ?? null,
+          accountNumber: landlordAccountNumber?.trim() ?? null,
+          accountName: landlordAccountName?.trim() ?? null,
+          // verificationStatus defaults to PENDING
+        },
+      });
+    }
   }
-  
+
+  // 🔥 ---- CREATE ITEM (with optional landlord link) ----
+  const item = await this.prisma.item.create({
+    data: {
+      // Core fields
+      title: dto.title,
+      shortDesc: dto.shortDesc,
+      longDesc: dto.longDesc,
+      dos: dto.dos,
+      donts: dto.donts,
+      price,
+      location: dto.location,
+      contactInfo: dto.contactInfo ?? null,
+
+      // Enums
+      category: dto.category,
+      itemType: dto.itemType,
+
+      // Status / featured
+      status: ItemStatus.PENDING,
+      isFeatured: false,
+
+      // Property details
+      bedrooms,
+      bathrooms,
+      sqft,
+      propertyType: dto.propertyType ?? null,
+
+      // Rent configuration
+      rentDurationMonths,
+      rentStartDate: null,
+      rentEndDate: null,
+      autoReopenAt: null,
+
+      // Commissions (platform-fixed)
+      agentCommissionPercent,
+      companyCommissionPercent,
+      platformFeePercent,
+
+      // Ownership / Agent
+      ownerId: null,
+      agentId: userId,
+      createdBy: userId,
+
+      // 🔗 Landlord link (only if we resolved one)
+      ...(landlordRecord
+        ? {
+            landlordLinks: {
+              create: {
+                landlordId: landlordRecord.id,
+              },
+            },
+          }
+        : {}),
+
+      // Images
+      images: {
+        create: imageUrls.map((url, index) => ({
+          url,
+          order: index,
+        })),
+      },
+    },
+    include: {
+      images: true,
+      createdByUser: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          avatarUrl: true,
+        },
+      },
+    },
+  });
+
+  console.log('✅ Item created successfully:', item.id);
+
+  if (landlordRecord) {
+    console.log(
+      `🏠 Linked property ${item.id} to landlord ${landlordRecord.id} (${landlordRecord.fullName})`,
+    );
+  }
+
+  return item;
+}
+
 
   async updateOwnItem(itemId: string, dto: UpdateItemDto, userId: string) {
     const item = await this.prisma.item.findUnique({ where: { id: itemId } });
@@ -359,17 +418,15 @@ export class ItemsService {
       throw new ForbiddenException('Cannot update deleted item');
     }
 
-    // Users cannot mark their own items as featured
-    if ('isFeatured' in dto) delete (dto as any).isFeatured;
+    // ✅ Type-safe way to remove isFeatured
+    const { isFeatured, ...safeDto } = dto;
 
-    // If you also want to prevent normal users from editing commissions, you can do:
-    // delete (dto as any).agentCommissionPercent;
-    // delete (dto as any).companyCommissionPercent;
-    // delete (dto as any).ownerCommissionPercent;
+    // If you also want to prevent normal users from editing commissions:
+    // const { isFeatured, agentCommissionPercent, companyCommissionPercent, ownerCommissionPercent, ...safeDto } = dto;
 
     return this.prisma.item.update({
       where: { id: itemId },
-      data: dto,
+      data: safeDto,
     });
   }
 
@@ -381,7 +438,7 @@ export class ItemsService {
     maxPrice?: number,
     location?: string,
   ) {
-    const where: any = {
+    const where: Prisma.ItemWhereInput = {  // ✅ Type-safe!
       isDeleted: false,
       status: {
         in: [ItemStatus.AVAILABLE, ItemStatus.RENTED],
@@ -441,7 +498,7 @@ export class ItemsService {
     if (!item) throw new NotFoundException('Item not found');
 
     if (role !== Role.SUPER_ADMIN && item.createdBy !== adminId) {
-      throw new ForbiddenException('You cannot manage another admin’s listing');
+      throw new ForbiddenException('You cannot manage another admin\'s listing');
     }
 
     return this.prisma.item.update({ where: { id }, data: dto });
@@ -465,7 +522,7 @@ export class ItemsService {
     }
 
     if (role !== Role.SUPER_ADMIN && item.createdBy !== adminId) {
-      throw new ForbiddenException('You cannot delete another admin’s listing');
+      throw new ForbiddenException('You cannot delete another admin\'s listing');
     }
 
     return this.prisma.item.update({
@@ -514,7 +571,7 @@ export class ItemsService {
 
     if (role !== Role.SUPER_ADMIN && item.createdBy !== adminId) {
       throw new ForbiddenException(
-        'You cannot feature another admin’s listing',
+        'You cannot feature another admin\'s listing',
       );
     }
 
@@ -533,7 +590,7 @@ export class ItemsService {
 
     if (role !== Role.SUPER_ADMIN && item.createdBy !== adminId) {
       throw new ForbiddenException(
-        'You cannot unfeature another admin’s listing',
+        'You cannot unfeature another admin\'s listing',
       );
     }
 

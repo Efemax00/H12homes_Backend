@@ -5,20 +5,33 @@ import {
   Post,
   Body,
   Param,
-  Req,
   UseGuards,
   Ip,
   Headers,
+  ForbiddenException,
 } from '@nestjs/common';
 import { AnalyticsService } from './analytics.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
-import { Role, EngagementType } from '@prisma/client';
+import { CurrentUser } from '../decorators/current-user.decorator';
+import type { JwtPayload } from '../types/jwt-payload.type';
+import { Role, EngagementType, Prisma } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
+
+// ✅ Define DTO for track engagement
+class TrackEngagementDto {
+  propertyId: string;
+  actionType: EngagementType;
+  metadata?: Prisma.InputJsonValue;
+}
 
 @Controller('analytics')
 export class AnalyticsController {
-  constructor(private analyticsService: AnalyticsService) {}
+  constructor(
+    private analyticsService: AnalyticsService,
+    private prisma: PrismaService,  // ✅ Inject Prisma directly
+  ) {}
 
   // ==================== VIEW TRACKING ====================
 
@@ -29,13 +42,13 @@ export class AnalyticsController {
   @Post('track-view/:propertyId')
   async trackView(
     @Param('propertyId') propertyId: string,
-    @Req() req,
+    @CurrentUser() user: JwtPayload | undefined,  // ✅ Optional user
     @Ip() ipAddress: string,
     @Headers('user-agent') userAgent: string,
     @Headers('referer') referrer: string,
     @Body('sessionId') sessionId?: string,
   ) {
-    const userId = req.user?.id; // Optional - user might not be logged in
+    const userId = user?.id; // Optional - user might not be logged in
 
     return this.analyticsService.trackView(
       propertyId,
@@ -53,15 +66,10 @@ export class AnalyticsController {
    */
   @Post('track-engagement')
   async trackEngagement(
-    @Req() req,
-    @Body()
-    body: {
-      propertyId: string;
-      actionType: EngagementType;
-      metadata?: any;
-    },
+    @CurrentUser() user: JwtPayload | undefined,  // ✅ Optional user
+    @Body() body: TrackEngagementDto,  // ✅ Type-safe DTO
   ) {
-    const userId = req.user?.id;
+    const userId = user?.id;
 
     return this.analyticsService.trackEngagement(
       body.propertyId,
@@ -81,20 +89,20 @@ export class AnalyticsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('property/:propertyId')
   async getPropertyAnalytics(
-    @Req() req,
+    @CurrentUser() user: JwtPayload,
     @Param('propertyId') propertyId: string,
   ) {
     // Verify admin owns this property (unless SUPER_ADMIN)
-    if (req.user.role !== Role.SUPER_ADMIN) {
-      const property = await this.analyticsService['prisma'].item.findFirst({
+    if (user.role !== Role.SUPER_ADMIN) {
+      const property = await this.prisma.item.findFirst({
         where: {
           id: propertyId,
-          createdBy: req.user.id,
+          createdBy: user.id,
         },
       });
 
       if (!property) {
-        throw new Error('Not your property');
+        throw new ForbiddenException('Not your property');
       }
     }
 
@@ -108,13 +116,13 @@ export class AnalyticsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('my-performance')
-  async getMyAnalytics(@Req() req) {
-    if (req.user.role === Role.SUPER_ADMIN) {
+  async getMyAnalytics(@CurrentUser() user: JwtPayload) {
+    if (user.role === Role.SUPER_ADMIN) {
       // Super admin sees platform-wide
       return this.analyticsService.getPlatformAnalytics();
     }
     // Regular admin sees only their properties
-    return this.analyticsService.getAdminAnalytics(req.user.id);
+    return this.analyticsService.getAdminAnalytics(user.id);
   }
 
   /**

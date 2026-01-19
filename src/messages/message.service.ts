@@ -6,7 +6,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { MessageType, InterestStatus, ItemStatus } from '@prisma/client';
+import { MessageType, InterestStatus, ItemStatus, Prisma } from '@prisma/client';
 
 @Injectable()
 export class MessagesService {
@@ -530,16 +530,7 @@ export class MessagesService {
   // ==================== SALES & MARKING ====================
 
   /**
-   * Admin marks property as sold to a specific buyer
-   */
-  /**
-   * Admin submits a sale for a specific buyer (manual proof phase)
-   */
-  /**
    * Admin marks property as SOLD or RENTED to a specific buyer
-   * - SALE  -> property is gone forever (status = SOLD)
-   * - RENT  -> property becomes RENTED until rentEndDate, then can auto-reopen
-   * - Household items / hotels / apartments / short-stay -> always AVAILABLE
    */
   async markAsSold(
     adminId: string,
@@ -618,7 +609,7 @@ export class MessagesService {
         notes: notes ?? null,
 
         // basic manual flow: payment submitted, waiting finance confirmation
-        status: 'PAYMENT_SUBMITTED', // or 'CONFIRMED' if you prefer skipping the pending step
+        status: 'PAYMENT_SUBMITTED',
         companyAccountPaid: false,
         markedSoldAt: new Date(),
 
@@ -631,7 +622,7 @@ export class MessagesService {
     });
 
     // 6. Update property status based on rules
-    const itemUpdateData: any = {};
+    const itemUpdateData: Prisma.ItemUpdateInput = {};  // ✅ Type-safe!
 
     if (isAlwaysAvailable) {
       // Household items, hotels, apartments, short-stay:
@@ -783,19 +774,29 @@ export class MessagesService {
     startDate?: Date;
     endDate?: Date;
   }) {
+    const where: Prisma.AuditLogWhereInput = {};  // ✅ Type-safe!
+
+    if (filters?.userId) {
+      where.userId = filters.userId;
+    }
+
+    if (filters?.action) {
+      where.action = filters.action;
+    }
+
+    if (filters?.entityType) {
+      where.entityType = filters.entityType;
+    }
+
+    if (filters?.startDate && filters?.endDate) {
+      where.createdAt = {
+        gte: filters.startDate,
+        lte: filters.endDate,
+      };
+    }
+
     return this.prisma.auditLog.findMany({
-      where: {
-        ...(filters?.userId && { userId: filters.userId }),
-        ...(filters?.action && { action: filters.action }),
-        ...(filters?.entityType && { entityType: filters.entityType }),
-        ...(filters?.startDate &&
-          filters?.endDate && {
-            createdAt: {
-              gte: filters.startDate,
-              lte: filters.endDate,
-            },
-          }),
-      },
+      where,
       include: {
         user: {
           select: {
