@@ -1,27 +1,79 @@
 // src/terms/terms.service.ts
-import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   PROPERTY_TERMS_CONFIG,
-  CURRENT_PROPERTY_TERMS_VERSION,
   TermsQuestion,
 } from './terms.config';
-import { SubmitTermsDto } from './dto/submit-terms.dto';
+import { AgreePropertyTermsDto } from './dto/agree-property.dto';
+
+
+
 
 @Injectable()
 export class TermsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  getCurrentPropertyTerms() {
-    return PROPERTY_TERMS_CONFIG;
+  /**
+   * Return current terms config + whether user has already passed them
+   * for a specific property.
+   */
+  async getCurrentForProperty(userId: string, propertyId?: string) {
+    const terms = PROPERTY_TERMS_CONFIG;
+
+    const agreement = await this.prisma.termsAgreement.findFirst({
+      where: {
+        userId,
+        propertyId: propertyId ?? null,
+        termsVersion: terms.version,
+      },
+      orderBy: { agreedAt: 'desc' }, // agreedAt exists on termsAgreement
+    });
+
+    let hasAgreed = false;
+    let lastScore: number | null = null;
+
+    if (agreement) {
+      const quiz = await this.prisma.termsQuizSubmission.findFirst({
+        where: {
+          agreementId: agreement.id,
+          passed: true,
+        },
+        // ⛔ removed orderBy: { createdAt: 'desc' } because createdAt doesn't exist
+      });
+
+      if (quiz) {
+        hasAgreed = true;
+        lastScore = quiz.score;
+      }
+    }
+
+    // Instead of terms.text (which doesn't exist), just spread the config
+    return {
+      ...terms,
+      hasAgreed,
+      lastScore,
+    };
   }
 
-  async hasUserAgreedForProperty(userId: string, propertyId: string): Promise<boolean> {
+  /**
+   * Helper: whether user has already agreed for a given property.
+   */
+  async hasUserAgreedForProperty(
+    userId: string,
+    propertyId: string,
+  ): Promise<boolean> {
+    const terms = PROPERTY_TERMS_CONFIG;
+
     const agreement = await this.prisma.termsAgreement.findFirst({
       where: {
         userId,
         propertyId,
-        termsVersion: CURRENT_PROPERTY_TERMS_VERSION,
+        termsVersion: terms.version,
       },
       orderBy: { agreedAt: 'desc' },
     });
@@ -33,46 +85,82 @@ export class TermsService {
         agreementId: agreement.id,
         passed: true,
       },
+      // ⛔ removed orderBy here as well
     });
 
     return !!quiz;
   }
 
-  async submitPropertyTerms(userId: string, dto: SubmitTermsDto) {
-    const terms = PROPERTY_TERMS_CONFIG;
-
-    if (dto.termsVersion !== terms.version) {
-      throw new BadRequestException('Invalid terms version, please refresh the page.');
-    }
-
-    if (!dto.answers || dto.answers.length === 0) {
-      throw new BadRequestException('Quiz answers are required.');
-    }
-
-    // map by questionId for scoring
+  private scoreAnswers(
+    answers: { [key: string]: string },
+    questions: TermsQuestion[],
+  ): { correctCount: number; totalQuestions: number } {
     const questionsById: Record<string, TermsQuestion> = {};
-    for (const q of terms.questions) {
+    for (const q of questions) {
       questionsById[q.id] = q;
     }
 
     let correctCount = 0;
+    const keys = Object.keys(answers);
 
-    for (const answer of dto.answers) {
-      const question = questionsById[answer.questionId];
-      if (!question) {
-        continue;
-      }
-      if (answer.answer === question.correctOption) {
+    for (const questionId of keys) {
+      const question = questionsById[questionId];
+      if (!question) continue;
+
+      const answer = answers[questionId];
+      if (answer && answer === question.correctOption) {
         correctCount += 1;
       }
     }
 
-    const totalQuestions = terms.questions.length;
+    const totalQuestions = questions.length || keys.length;
+
+    return { correctCount, totalQuestions };
+  }
+
+  /**
+   * Handle user submitting quiz + agreeing.
+   * DTO shape: { propertyId?, answers: { q1, q2, q3 }, termsVersion }
+   */
+  async agreeForProperty(
+    userId: string,
+    dto: AgreePropertyTermsDto,
+  ) {
+    const terms = PROPERTY_TERMS_CONFIG;
+
+    // 🔁 Normalize both to numbers so TS is happy and logic is correct
+    if (Number(dto.termsVersion) !== Number(terms.version)) {
+      throw new BadRequestException(
+        'Invalid terms version, please refresh the page.',
+      );
+    }
+
+    const { answers } = dto;
+
+    if (
+      !answers ||
+      typeof answers !== 'object' ||
+      !answers.q1 ||
+      !answers.q2 ||
+      !answers.q3
+    ) {
+      throw new BadRequestException(
+        'All quiz questions must be answered.',
+      );
+    }
+
+    const { correctCount, totalQuestions } = this.scoreAnswers(
+      answers,
+      terms.questions,
+    );
+
     if (totalQuestions === 0) {
       throw new BadRequestException('Quiz is not configured.');
     }
 
-    const scorePercent = Math.round((correctCount / totalQuestions) * 100);
+    const scorePercent = Math.round(
+      (correctCount / totalQuestions) * 100,
+    );
     const passed = scorePercent >= terms.passScorePercent;
 
     if (!passed) {
@@ -81,27 +169,27 @@ export class TermsService {
       );
     }
 
-    // Create agreement record
     const agreement = await this.prisma.termsAgreement.create({
       data: {
         userId,
-        propertyId: dto.propertyId,
+        propertyId: dto.propertyId ?? null,
         termsVersion: terms.version,
         ipAddress: null,
         userAgent: null,
       },
     });
 
-    // Save quiz submission
     await this.prisma.termsQuizSubmission.create({
       data: {
         agreementId: agreement.id,
         score: scorePercent,
         passed: true,
-        answers: dto.answers.map((a) => ({
-          questionId: a.questionId,
-          answer: a.answer,
-        })),
+        answers: Object.entries(answers).map(
+          ([questionId, answer]) => ({
+            questionId,
+            answer,
+          }),
+        ),
       },
     });
 
