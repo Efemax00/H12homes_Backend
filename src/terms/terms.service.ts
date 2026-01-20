@@ -122,20 +122,20 @@ export class TermsService {
    * Handle user submitting quiz + agreeing.
    * DTO shape: { propertyId?, answers: { q1, q2, q3 }, termsVersion }
    */
-  async agreeForProperty(
-    userId: string,
-    dto: AgreePropertyTermsDto,
-  ) {
-    const terms = PROPERTY_TERMS_CONFIG;
+ async agreeForProperty(userId: string, dto: AgreePropertyTermsDto) {
+  const terms = PROPERTY_TERMS_CONFIG;
 
-    // 🔁 Normalize both to numbers so TS is happy and logic is correct
-    if (Number(dto.termsVersion) !== Number(terms.version)) {
-      throw new BadRequestException(
-        'Invalid terms version, please refresh the page.',
-      );
-    }
+  // 🔍 Debug log (add this once to see what's happening)
+  console.log('dto.termsVersion:', dto.termsVersion, typeof dto.termsVersion);
+  console.log('config version:', terms.version, typeof terms.version);
 
-    const { answers } = dto;
+  if (dto.termsVersion !== terms.version) {
+    throw new BadRequestException(
+      'Invalid terms version, please refresh the page.',
+    );
+  }
+
+  const { answers } = dto;
 
     if (
       !answers ||

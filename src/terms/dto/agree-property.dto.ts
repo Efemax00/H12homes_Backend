@@ -1,12 +1,9 @@
-// src/terms/dto/agree-property-terms.dto.ts
 import {
   IsNotEmpty,
   IsOptional,
   IsString,
   IsObject,
-  IsNumber,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
 
 export class AgreePropertyTermsDto {
   @IsOptional()
@@ -21,11 +18,8 @@ export class AgreePropertyTermsDto {
     q3: string;
   };
 
-  // comes from frontend as number or string → normalize to number
+  // Use string ID, e.g. "PROPERTY_TERMS_V1"
   @IsNotEmpty()
-  @Transform(({ value }) =>
-    value !== undefined && value !== null ? Number(value) : value,
-  )
-  @IsNumber()
-  termsVersion!: number;
+  @IsString()
+  termsVersion!: string;
 }
