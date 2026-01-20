@@ -48,6 +48,16 @@ export class ItemsController {
     return this.itemsService.getAllItemsWithAdmin(user.id, user.role);
   }
 
+  // src/items/items.controller.ts
+
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.ADMIN, Role.SUPER_ADMIN)
+@Get('admin/:id/details')
+getItemForEdit(@Param('id') id: string, @Req() req) {
+  const user = req.user as { id: string; role: Role };
+  return this.itemsService.getItemForEdit(id, user.id, user.role);
+}
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('admin/status/:status')

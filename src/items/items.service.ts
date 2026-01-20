@@ -67,33 +67,41 @@ export class ItemsService {
   // ======================
 
   // ✅ Only my items if ADMIN, all if SUPER_ADMIN
-  async getAllItemsWithAdmin(adminId: string, role: Role) {
-    const where: Prisma.ItemWhereInput =
-      role === Role.SUPER_ADMIN
-        ? { isDeleted: false }
-        : {
-            isDeleted: false,
-            createdBy: adminId,
-          };
+  // src/items/items.service.ts - Update this method
 
-    return this.prisma.item.findMany({
-      where,
-      include: {
-        images: true,
-        createdByUser: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-            avatarUrl: true,
-          },
+async getAllItemsWithAdmin(adminId: string, role: Role) {
+  const where: Prisma.ItemWhereInput =
+    role === Role.SUPER_ADMIN
+      ? { isDeleted: false }
+      : {
+          isDeleted: false,
+          createdBy: adminId,
+        };
+
+  return this.prisma.item.findMany({
+    where,
+    include: {
+      images: true,
+      landlordLinks: {
+        include: {
+          landlord: true,
         },
       },
-      orderBy: [{ isFeatured: 'desc' }, { createdAt: 'desc' }],
-    });
-  }
+      createdByUser: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          avatarUrl: true,
+        },
+      },
+    },
+    orderBy: [{ isFeatured: 'desc' }, { createdAt: 'desc' }],
+  });
+}
+
 
   // ✅ Get items by status, but scoped by admin
   async getItemsByStatus(adminId: string, role: Role, status: ItemStatus) {
@@ -488,21 +496,119 @@ async createItem(
   // ======================
 
   // Admin update (respect ownership unless SUPER_ADMIN)
-  async adminUpdateItem(
-    id: string,
-    dto: UpdateItemDto,
-    adminId: string,
-    role: Role,
-  ) {
-    const item = await this.prisma.item.findUnique({ where: { id } });
-    if (!item) throw new NotFoundException('Item not found');
+  // src/items/items.service.ts
 
-    if (role !== Role.SUPER_ADMIN && item.createdBy !== adminId) {
-      throw new ForbiddenException('You cannot manage another admin\'s listing');
-    }
+// Add this method after adminUpdateItem
+async adminUpdateItem(
+  id: string,
+  dto: UpdateItemDto,
+  adminId: string,
+  role: Role,
+) {
+  const item = await this.prisma.item.findUnique({
+    where: { id },
+    include: {
+      landlordLinks: {
+        include: {
+          landlord: true,
+        },
+      },
+    },
+  });
 
-    return this.prisma.item.update({ where: { id }, data: dto });
+  if (!item) throw new NotFoundException('Item not found');
+
+  if (role !== Role.SUPER_ADMIN && item.createdBy !== adminId) {
+    throw new ForbiddenException('You cannot manage another admin\'s listing');
   }
+
+  // ✅ Extract landlord fields from DTO
+  const {
+    landlordFullName,
+    landlordPhone,
+    landlordEmail,
+    landlordAddress,
+    landlordBankName,
+    landlordAccountNumber,
+    landlordAccountName,
+    ...itemUpdateData
+  } = dto;
+
+  // ✅ Check if any landlord data was provided
+  const hasLandlordUpdate =
+    landlordFullName !== undefined ||
+    landlordPhone !== undefined ||
+    landlordEmail !== undefined ||
+    landlordAddress !== undefined ||
+    landlordBankName !== undefined ||
+    landlordAccountNumber !== undefined ||
+    landlordAccountName !== undefined;
+
+  // ✅ Handle landlord updates if provided
+  if (hasLandlordUpdate) {
+    const existingLink = item.landlordLinks[0];
+    
+    if (existingLink) {
+      // Update existing landlord
+      await this.prisma.landlord.update({
+        where: { id: existingLink.landlordId },
+        data: {
+          ...(landlordFullName !== undefined && { fullName: landlordFullName.trim() }),
+          ...(landlordPhone !== undefined && { phone: landlordPhone?.trim() ?? null }),
+          ...(landlordEmail !== undefined && { email: landlordEmail ? landlordEmail.trim().toLowerCase() : null }),
+          ...(landlordAddress !== undefined && { address: landlordAddress?.trim() ?? null }),
+          ...(landlordBankName !== undefined && { bankName: landlordBankName?.trim() ?? null }),
+          ...(landlordAccountNumber !== undefined && { accountNumber: landlordAccountNumber?.trim() ?? null }),
+          ...(landlordAccountName !== undefined && { accountName: landlordAccountName?.trim() ?? null }),
+        },
+      });
+    } else if (landlordFullName && landlordFullName.trim()) {
+      // Create new landlord and link
+      const newLandlord = await this.prisma.landlord.create({
+        data: {
+          fullName: landlordFullName.trim(),
+          phone: landlordPhone?.trim() ?? null,
+          email: landlordEmail ? landlordEmail.trim().toLowerCase() : null,
+          address: landlordAddress?.trim() ?? null,
+          bankName: landlordBankName?.trim() ?? null,
+          accountNumber: landlordAccountNumber?.trim() ?? null,
+          accountName: landlordAccountName?.trim() ?? null,
+        },
+      });
+
+      await this.prisma.propertyToLandlord.create({
+        data: {
+          propertyId: item.id,
+          landlordId: newLandlord.id,
+        },
+      });
+    }
+  }
+
+  // ✅ Update the item itself (excluding landlord fields)
+  return this.prisma.item.update({
+    where: { id },
+    data: itemUpdateData,
+    include: {
+      images: true,
+      landlordLinks: {
+        include: {
+          landlord: true,
+        },
+      },
+      createdByUser: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          avatarUrl: true,
+        },
+      },
+    },
+  });
+}
 
   // Soft delete
   async adminDeleteItem(
@@ -599,4 +705,38 @@ async createItem(
       data: { isFeatured: false },
     });
   }
+
+  // src/items/items.service.ts
+
+async getItemForEdit(id: string, adminId: string, role: Role) {
+  const item = await this.prisma.item.findUnique({
+    where: { id },
+    include: {
+      images: true,
+      landlordLinks: {
+        include: {
+          landlord: true,
+        },
+      },
+      createdByUser: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          avatarUrl: true,
+        },
+      },
+    },
+  });
+
+  if (!item) throw new NotFoundException('Item not found');
+
+  if (role !== Role.SUPER_ADMIN && item.createdBy !== adminId) {
+    throw new ForbiddenException('You cannot view another admin\'s listing details');
+  }
+
+  return item;
+}
 }
