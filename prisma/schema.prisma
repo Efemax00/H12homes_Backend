@@ -60,6 +60,8 @@ model User {
   adminCommissions     Commission[] @relation("AdminCommissions")
   financeReviewedSales Sale[]       @relation("FinanceReviewedSales")
 
+  viewingFeePayments   ViewingFeePayment[] @relation("UserViewingFees")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -135,6 +137,7 @@ model Item {
 
   // NEW: payments related to this property
   payments Payment[]
+  viewingFeePayments ViewingFeePayment[] @relation("PropertyViewingFees")
 
   isDeleted      Boolean   @default(false)
   deletedAt      DateTime?
@@ -403,6 +406,37 @@ model Payment {
   @@index([propertyId])
   @@index([status])
   @@map("payments")
+}
+
+// ==================== VIEWING FEE PAYMENTS ====================
+
+model ViewingFeePayment {
+  id                String        @id @default(uuid()) @db.Uuid
+  userId            String        @db.Uuid
+  propertyId        String        @db.Uuid
+  amount            Float
+  paystackReference String        @unique
+  status            PaymentStatus @default(PENDING)
+  paidAt            DateTime?
+  
+  // Commission splits
+  agentShare        Float
+  companyShare      Float
+  
+  // Metadata
+  metadata          Json?
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  user     User @relation("UserViewingFees", fields: [userId], references: [id], onDelete: Cascade)
+  property Item @relation("PropertyViewingFees", fields: [propertyId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([propertyId])
+  @@index([status])
+  @@index([paystackReference])
+  @@map("viewing_fee_payments")
 }
 
 // Commissions for admins/agents
