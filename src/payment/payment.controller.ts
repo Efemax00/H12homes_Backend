@@ -20,8 +20,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ViewingFeePaymentService } from './viewing-fee-payment.service';
-import { InitializeViewingFeeDto } from './dto/initialize-viewing-fee.dto';
+import { ReservationFeePaymentService } from './reservation-fee-payment.service';
+import { InitializeViewingFeeDto } from './dto/initialize-reservation-fee.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import {
@@ -40,28 +40,28 @@ export class PaymentController {
   constructor(
     private prisma: PrismaService,
     private cloudinaryService: CloudinaryService,
-    private viewingFeePaymentService: ViewingFeePaymentService,
+    private reservationFeePaymentService: ReservationFeePaymentService,
   ) {}
 
   // ======================================================
-  // VIEWING FEE PAYMENT ENDPOINTS (NEW)
+  // RESERVATION FEE PAYMENT ENDPOINTS (NEW)
   // ======================================================
 
   /**
    * Initialize viewing fee payment via Paystack
    * POST /payment/viewing-fee/initialize
    */
-  @Post('viewing-fee/initialize')
-  async initializeViewingFee(
-    @Req() req,
-    @Body() dto: InitializeViewingFeeDto,
-  ) {
-    const userId = req.user.id;
-    return this.viewingFeePaymentService.initializeViewingFee(
-      userId,
-      dto.propertyId,
-    );
-  }
+  @Post('reservation-fee/initialize')
+async initializeReservationFee(
+  @Req() req,
+  @Body() dto: InitializeViewingFeeDto, // Reuse same DTO (propertyId)
+) {
+  const userId = req.user.id;
+  return this.reservationFeePaymentService.initializeReservationFee(
+    userId,
+    dto.propertyId,
+  );
+}
 
   /**
    * Verify viewing fee payment after Paystack callback
@@ -72,106 +72,104 @@ export class PaymentController {
     if (!reference) {
       throw new BadRequestException('Payment reference is required');
     }
-    return this.viewingFeePaymentService.verifyViewingFee(reference);
+    return this.reservationFeePaymentService.verifyReservationFee(reference);
   }
 
   /**
    * Check if user has already paid viewing fee for a property
    * GET /payment/viewing-fee/check?propertyId=xxx
    */
-  @Get('viewing-fee/check')
-  async checkViewingFee(
-    @Req() req,
-    @Query('propertyId') propertyId: string,
-  ) {
-    if (!propertyId) {
-      throw new BadRequestException('Property ID is required');
-    }
-
-    const userId = req.user.id;
-    const hasPaid = await this.viewingFeePaymentService.hasUserPaidViewingFee(
-      userId,
-      propertyId,
-    );
-
-    return { hasPaid };
+  @Get('reservation-fee/check')
+async checkReservation(
+  @Req() req,
+  @Query('propertyId') propertyId: string,
+) {
+  if (!propertyId) {
+    throw new BadRequestException('Property ID is required');
   }
 
-  /**
-   * Get user's viewing fee payment history
-   * GET /payment/viewing-fee/my-payments
-   */
-  @Get('viewing-fee/my-payments')
-  async getMyViewingFeePayments(@Req() req) {
-    const userId = req.user.id;
-    return this.viewingFeePaymentService.getUserPayments(userId);
-  }
+  const userId = req.user.id;
+  const hasActiveReservation = await this.reservationFeePaymentService.hasUserActiveReservation(
+    userId,
+    propertyId,
+  );
 
-  /**
-   * Get all viewing fee payments (ADMIN/SUPER_ADMIN)
-   * GET /payment/viewing-fee/admin
-   */
-  @Get('viewing-fee/admin')
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  async getAdminViewingFeePayments(@Req() req) {
-    const user = req.user as { id: string; role: Role };
+  return { hasActiveReservation };
+}
 
-    // Get all viewing fee payments
-    const payments = await this.prisma.viewingFeePayment.findMany({
-      where:
-        user.role === Role.SUPER_ADMIN
-          ? {} // SUPER_ADMIN sees all
-          : {
-              // ADMIN sees only their properties
-              property: {
-                createdBy: user.id,
-              },
-            },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-          },
-        },
-        property: {
-          select: {
-            id: true,
-            title: true,
-            location: true,
-            price: true,
-            images: {
-              take: 1,
-              select: { url: true },
-            },
-          },
+// OLD: @Get('viewing-fee/my-payments')
+// NEW:
+@Get('reservation-fee/my-payments')
+async getMyReservationPayments(@Req() req) {
+  const userId = req.user.id;
+  return this.prisma.reservationFeePayment.findMany({
+    where: { userId },
+    include: {
+      property: {
+        select: {
+          id: true,
+          title: true,
+          location: true,
+          price: true,
+          images: { take: 1, select: { url: true } },
         },
       },
-      orderBy: { createdAt: 'desc' },
-    });
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+}
 
-    // Calculate stats
-    const stats = {
+// OLD: @Get('viewing-fee/admin')
+// NEW:
+@Get('reservation-fee/admin')
+@Roles(Role.ADMIN, Role.SUPER_ADMIN)
+async getAdminReservationPayments(@Req() req) {
+  const user = req.user as { id: string; role: Role };
+
+  const payments = await this.prisma.reservationFeePayment.findMany({
+    where:
+      user.role === Role.SUPER_ADMIN
+        ? {}
+        : {
+            property: {
+              createdBy: user.id,
+            },
+          },
+    include: {
+      user: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+        },
+      },
+      property: {
+        select: {
+          id: true,
+          title: true,
+          location: true,
+          price: true,
+          images: { take: 1, select: { url: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return {
+    payments,
+    stats: {
       total: payments.length,
       totalAmount: payments.reduce((sum, p) => sum + p.amount, 0),
       successCount: payments.filter((p) => p.status === 'SUCCESS').length,
-      pendingCount: payments.filter((p) => p.status === 'PENDING').length,
-      companyEarnings: payments
+      h12Earnings: payments
         .filter((p) => p.status === 'SUCCESS')
-        .reduce((sum, p) => sum + p.companyShare, 0),
-      agentEarnings: payments
-        .filter((p) => p.status === 'SUCCESS')
-        .reduce((sum, p) => sum + p.agentShare, 0),
-    };
-
-    return {
-      payments,
-      stats,
-    };
-  }
+        .reduce((sum, p) => sum + p.h12KeepsAmount, 0),
+    },
+  };
+}
 
   // ======================================================
   // USER-SIDE: VIEW COMPANY PAYMENT DETAILS

@@ -739,4 +739,171 @@ async getItemForEdit(id: string, adminId: string, role: Role) {
 
   return item;
 }
+
+// ============================
+// RESERVATION FEE SYSTEM
+// ============================
+
+async reserveProperty(propertyId: string, userId: string) {
+  const item = await this.prisma.item.findUnique({
+    where: { id: propertyId },
+  });
+
+  if (!item) {
+    throw new NotFoundException('Property not found');
+  }
+
+  if (item.isReserved && item.currentReservationBy !== userId) {
+    throw new BadRequestException('Property is already reserved by another user');
+  }
+
+  // Check if property is AVAILABLE
+  if (item.status !== ItemStatus.AVAILABLE) {
+    throw new BadRequestException('Property is not available for reservation');
+  }
+
+  // Create reservation fee payment record
+  const payment = await this.prisma.reservationFeePayment.create({
+    data: {
+      userId,
+      propertyId,
+      amount: 10000, // ₦10,000
+      paystackReference: `RSV-${propertyId}-${userId}-${Date.now()}`,
+      status: 'PENDING',
+      h12KeepsAmount: 10000,
+    },
+  });
+
+  return {
+    message: 'Reservation fee payment created',
+    payment,
+    nextStep: 'Complete payment via Paystack',
+  };
+}
+
+async getReservationStatus(propertyId: string, userId: string) {
+  const reservation = await this.prisma.reservationFeePayment.findFirst({
+    where: {
+      propertyId,
+      userId,
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
+
+  if (!reservation) {
+    return {
+      reserved: false,
+      message: 'No active reservation',
+    };
+  }
+
+  const item = await this.prisma.item.findUnique({
+    where: { id: propertyId },
+  });
+
+  return {
+    reserved: item?.isReserved,
+    paymentStatus: reservation.status,
+    amount: reservation.amount,
+    paidAt: reservation.paidAt,
+    expiresAt: item?.reservationExpiresAt,
+    daysRemaining: item?.reservationExpiresAt
+      ? Math.ceil(
+          (item.reservationExpiresAt.getTime() - Date.now()) /
+            (1000 * 60 * 60 * 24),
+        )
+      : 0,
+  };
+}
+
+async cancelReservation(propertyId: string, userId: string, reason?: string) {
+  const reservation = await this.prisma.reservationFeePayment.findFirst({
+    where: {
+      propertyId,
+      userId,
+      status: 'SUCCESS', // Only cancel paid reservations
+    },
+  });
+
+  if (!reservation) {
+    throw new NotFoundException('No active paid reservation found');
+  }
+
+  // Check if within 7-day window
+  const item = await this.prisma.item.findUnique({
+    where: { id: propertyId },
+  });
+
+  if (!item || !item.reservationExpiresAt) {
+    throw new BadRequestException('Reservation has expired');
+  }
+
+  // Release the property
+  await this.prisma.item.update({
+    where: { id: propertyId },
+    data: {
+      isReserved: false,
+      currentReservationBy: null,
+      reservationStartedAt: null,
+      reservationExpiresAt: null,
+      status: ItemStatus.AVAILABLE,
+    },
+  });
+
+  return {
+    message: 'Reservation cancelled',
+    amount: reservation.amount,
+    note: 'Reservation fee (₦10,000) is non-refundable',
+  };
+}
+
+// Handle Paystack webhook for reservation fee
+async handleReservationFeePayment(paystackRef: string, status: string) {
+  const payment = await this.prisma.reservationFeePayment.findUnique({
+    where: { paystackReference: paystackRef },
+  });
+
+  if (!payment) {
+    throw new NotFoundException('Payment not found');
+  }
+
+  if (status !== 'success') {
+    await this.prisma.reservationFeePayment.update({
+      where: { id: payment.id },
+      data: { status: 'FAILED' },
+    });
+    return { success: false };
+  }
+
+  // Mark payment as successful
+  await this.prisma.reservationFeePayment.update({
+    where: { id: payment.id },
+    data: {
+      status: 'SUCCESS',
+      paidAt: new Date(),
+    },
+  });
+
+  // Lock the property
+  await this.prisma.item.update({
+    where: { id: payment.propertyId },
+    data: {
+      isReserved: true,
+      currentReservationBy: payment.userId,
+      reservationStartedAt: new Date(),
+      reservationExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+      reservationFeeStatus: 'PAID',
+      reservationFeePaidAt: new Date(),
+      status: ItemStatus.PENDING,
+    },
+  });
+
+  // Create VA chat for this property
+  // (We'll add household items VA separately)
+
+  return { success: true };
+}
+
 }

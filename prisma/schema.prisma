@@ -31,6 +31,11 @@ model User {
   lastName   String  @map("last_name")
   avatarUrl  String? @map("avatar_url")
   role       Role    @default(USER)
+  
+  // NEW: User type flags
+  isAgent    Boolean @default(false)  // Real estate agent
+  isInventor Boolean @default(false) // Furniture maker/custom items seller
+  isFurnitureMaker Boolean @default(false)
 
   ownedProperties Item[] @relation("OwnerRelation")
   agentListings   Item[] @relation("AgentRelation")
@@ -61,6 +66,21 @@ model User {
   financeReviewedSales Sale[]       @relation("FinanceReviewedSales")
 
   viewingFeePayments   ViewingFeePayment[] @relation("UserViewingFees")
+  
+  // NEW: Virtual Assistant Chat
+  virtualAssistantChats VirtualAssistantChat[] @relation("UserVAChats")
+  
+  // NEW: Household items / custom items
+  householdItemsSold    HouseholdItem[] @relation("HouseholdItemSeller")
+  householdItemsPurchased HouseholdItemOrder[] @relation("HouseholdItemBuyer")
+  householdItemsCreated HouseholdItem[] @relation("HouseholdItemCreatedBy")
+  
+  // NEW: Agent assignments for household items
+  assignedHouseholdOrders HouseholdItemOrder[] @relation("AssignedAgent")
+  
+  // NEW: Reserved properties (real estate reservation fee)
+  reservedProperties Item[] @relation("ReservationUser")
+  reservationFeePayments ReservationFeePayment[] @relation("ReservationFeePayments")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -138,6 +158,34 @@ model Item {
   // NEW: payments related to this property
   payments Payment[]
   viewingFeePayments ViewingFeePayment[] @relation("PropertyViewingFees")
+  
+  // NEW: Real Estate Reservation Fee System (for house renting/selling)
+  reservationFeeAmount    Float                   @default(10000)  // ₦10,000 NON-REFUNDABLE fee
+  reservationFeeStatus    ReservationFeeStatus?
+  reservationFeePaidAt    DateTime?
+  
+  // Track which user has active reservation
+  currentReservationBy    String?                 @db.Uuid
+  reservationUser         User?                   @relation("ReservationUser", fields: [currentReservationBy], references: [id], onDelete: SetNull)
+  
+  // Reservation timeline
+  reservationStartedAt    DateTime?
+  reservationExpiresAt    DateTime?               // 7 days from start
+  
+  // For when user doesn't like property
+  reservationRefundedAt   DateTime?
+  reservationRefundReason String?
+  
+  // Agent viewing
+  agentViewingScheduledAt DateTime?
+  agentViewingCompletedAt DateTime?
+  agentViewingApproved    Boolean?
+  
+  // Property lock (shows PENDING to others)
+  isReserved              Boolean                 @default(false)
+  
+  // Reservation fee payments
+  reservationFeePayments  ReservationFeePayment[] @relation("PropertyReservationFees")
 
   isDeleted      Boolean   @default(false)
   deletedAt      DateTime?
@@ -153,6 +201,10 @@ model Item {
   updatedAt DateTime @updatedAt
 
   @@index([isDeleted])
+  @@index([itemType])
+  @@index([category])
+  @@index([currentReservationBy])
+  @@index([isReserved])
 }
 
 model ItemImage {
@@ -181,6 +233,287 @@ enum ItemCategory {
 enum ItemType {
   HOUSE
   HOUSEHOLD_ITEM
+}
+
+// ==================== HOUSEHOLD ITEMS (NEW) ====================
+
+model HouseholdItem {
+  id          String                @id @default(uuid()) @db.Uuid
+  title       String
+  description String                @db.Text
+  price       Float
+  location    String?
+  
+  // Type: STOCK or CUSTOM
+  type        HouseholdItemType     @default(STOCK)
+  status      HouseholdItemStatus   @default(AVAILABLE)
+  
+  // For CUSTOM items
+  productionDaysMin Int?              // 10 days min
+  productionDaysMax Int?              // 30 days max
+  customizationOptions Json?          // Available colors, sizes, materials
+  
+  // Images
+  images      HouseholdItemImage[]
+  
+  // Seller info
+  sellerId    String                @db.Uuid
+  seller      User                  @relation("HouseholdItemSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  createdBy   String?               @db.Uuid
+  createdByUser User?               @relation("HouseholdItemCreatedBy", fields: [createdBy], references: [id])
+  
+  // Virtual assistant chats about this item
+  virtualAssistantChats VirtualAssistantChat[] @relation("ItemVAChats")
+  
+  // Orders/purchases
+  orders      HouseholdItemOrder[]  @relation("ItemOrders")
+  
+  viewCount   Int                   @default(0)
+  
+  isDeleted   Boolean               @default(false)
+  deletedAt   DateTime?
+  
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  
+  @@index([type])
+  @@index([status])
+  @@index([sellerId])
+  @@index([isDeleted])
+}
+
+enum HouseholdItemType {
+  STOCK        // Already exists, single item
+  CUSTOM       // Made-to-order, can make unlimited
+}
+
+enum HouseholdItemStatus {
+  AVAILABLE    // Can order
+  DELISTED     // Seller removed it
+  ARCHIVED     // Old item
+}
+
+model HouseholdItemImage {
+  id          String              @id @default(uuid()) @db.Uuid
+  url         String
+  order       Int                 @default(0)
+  itemId      String              @db.Uuid
+  item        HouseholdItem       @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  
+  @@index([itemId])
+}
+
+// Orders for household items (like sales for real estate)
+model HouseholdItemOrder {
+  id                String                  @id @default(uuid()) @db.Uuid
+  
+  itemId            String                  @db.Uuid
+  item              HouseholdItem           @relation("ItemOrders", fields: [itemId], references: [id], onDelete: Cascade)
+  
+  buyerId           String                  @db.Uuid
+  buyer             User                    @relation("HouseholdItemBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  
+  sellerId          String                  @db.Uuid
+  
+  // Agent assignment (MANDATORY)
+  assignedAgentId   String?                 @db.Uuid
+  assignedAgent     User?                   @relation("AssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  
+  // Order amount
+  amount            Float                   // Total price
+  
+  // Payment tracking
+  payments          HouseholdItemPayment[]
+  
+  // CUSTOM items only
+  customizations    Json?                   // {color: "black", size: "3-seater", material: "leather"}
+  
+  // Status tracking
+  status            HouseholdItemOrderStatus @default(PAYMENT_PENDING)
+  
+  // Payment tracking
+  paymentStatus     PaymentStatus           @default(PENDING)
+  paymentId         String?                 @db.Uuid
+  paidAt            DateTime?
+  
+  // For CUSTOM items - production tracking
+  productionStatus  CustomProductionStatus? @default(NOT_STARTED)
+  productionStartedAt DateTime?
+  expectedCompletionDate DateTime?
+  
+  // Day 21: Final photos (for custom)
+  finalPhotosUrl    String[]                // Array of photo URLs
+  finalPhotosApprovedAt DateTime?
+  finalPhotosApprovalStatus CustomPhotoApprovalStatus?
+  finalPhotosRejectionReason String?
+  
+  // For STOCK items - delivery & agent verification
+  deliveryStatus    StockDeliveryStatus?
+  verifiedByAgentAt DateTime?
+  agentVerificationNotes String?
+  
+  // REFUND POLICY (STOCK ITEMS ONLY)
+  isItemNew         Boolean?                // Is this a new item (eligible for 3-day refund)?
+  refundEligibleUntil DateTime?              // 3 days after delivery (only for new items)
+  refundRequested   Boolean @default(false) // User requested refund
+  refundRequestedAt DateTime?
+  refundAmount      Float?
+  refundReason      String?
+  refundedAt        DateTime?
+  refundStatus      RefundStatus?           // PENDING, APPROVED, REJECTED
+  
+  // AGENT PAYMENT (Only paid after 3 days with no complaints)
+  agentFeeAmount    Float?                  // Agent commission
+  agentFeePaid      Boolean @default(false) // Paid only after 3-day window with no complaints
+  agentFeePaidAt    DateTime?
+  complaintRaised   Boolean @default(false) // Did buyer raise complaint within 3 days?
+  complaintRaisedAt DateTime?
+  complaintReason   String?
+  
+  // Completion
+  completedAt       DateTime?
+  agentCompletionNotes String?
+  
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  
+  @@index([itemId])
+  @@index([buyerId])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([productionStatus])
+  @@map("household_item_orders")
+}
+
+enum HouseholdItemOrderStatus {
+  PAYMENT_PENDING         // User hasn't paid yet
+  PAYMENT_CONFIRMED       // User paid H12
+  AGENT_CONTACTED         // Agent is contacted (for both stock & custom)
+  AGENT_MEETING_SCHEDULED // For STOCK: meeting scheduled with agent
+  AGENT_VERIFICATION_PENDING // For STOCK: waiting for agent to verify
+  PRODUCTION_IN_PROGRESS  // For CUSTOM: maker is building
+  AWAITING_FINAL_PHOTOS   // For CUSTOM: waiting for Day 21 photos
+  FINAL_PHOTOS_APPROVED   // For CUSTOM: user approved photos
+  AWAITING_DELIVERY       // For both: ready to deliver
+  DELIVERED               // Item delivered/received
+  COMPLETED               // Deal done
+  CANCELLED               // User cancelled
+  DISPUTED                // Dispute filed
+  REFUNDED                // Refund processed
+}
+
+enum CustomProductionStatus {
+  NOT_STARTED
+  MATERIALS_SOURCING      // Days 1-5
+  FRAME_ASSEMBLY          // Days 6-10
+  UPHOLSTERY_WORK         // Days 11-18
+  QUALITY_CHECK           // Days 19-20
+  FINAL_PHOTOS_READY      // Day 21
+  READY_FOR_DELIVERY      // After approval
+}
+
+enum CustomPhotoApprovalStatus {
+  PENDING                 // Waiting for user approval
+  APPROVED                // User approved
+  CHANGES_REQUESTED       // User wants changes
+  CHANGES_COMPLETED       // Changes made
+  REJECTED                // User rejected
+}
+
+enum StockDeliveryStatus {
+  AWAITING_AGENT_VERIFICATION
+  AGENT_VERIFIED
+  READY_FOR_DELIVERY
+  DELIVERED
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ==================== VIRTUAL ASSISTANT CHAT (NEW) ====================
+
+model VirtualAssistantChat {
+  id              String                        @id @default(uuid()) @db.Uuid
+  
+  userId          String                        @db.Uuid
+  user            User                          @relation("UserVAChats", fields: [userId], references: [id], onDelete: Cascade)
+  
+  householdItemId String                        @db.Uuid
+  householdItem   HouseholdItem                 @relation("ItemVAChats", fields: [householdItemId], references: [id], onDelete: Cascade)
+  
+  // Chat status
+  status          VAChatStatus                  @default(ACTIVE)
+  
+  // Gatekeeper checkpoints (user must understand before agent contact)
+  checkpoint1_ItemTypeUnderstand Boolean        @default(false) // Confirmed item type (stock vs custom)
+  checkpoint2_PaymentWarning     Boolean        @default(false) // Confirmed payment non-refundable
+  checkpoint3_H12Liability       Boolean        @default(false) // Confirmed H12 liability limits
+  checkpoint4_ProcessUnderstand  Boolean        @default(false) // For custom: understood timeline & Day 21 approval
+  checkpoint5_FinalConfirm       Boolean        @default(false) // User clicked [I UNDERSTAND]
+  
+  // Custom item specific
+  customizations Json?                          // Selected color, size, material (if custom)
+  totalPrice     Float?                         // Calculated price shown to user
+  
+  // When user ready to proceed
+  readyForPayment Boolean                       @default(false)
+  readyForPaymentAt DateTime?
+  
+  messages        VAChatMessage[]
+  
+  createdAt       DateTime                      @default(now())
+  updatedAt       DateTime                      @updatedAt
+  
+  @@index([userId])
+  @@index([householdItemId])
+  @@index([status])
+  @@map("virtual_assistant_chats")
+}
+
+enum VAChatStatus {
+  ACTIVE                  // User still chatting with VA
+  AWAITING_PAYMENT        // User confirmed, waiting to pay
+  COMPLETED               // User paid, moved to agent
+  ABANDONED               // User left without paying
+}
+
+model VAChatMessage {
+  id                String @id @default(uuid()) @db.Uuid
+  
+  chatId            String @db.Uuid
+  chat              VirtualAssistantChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  
+  // Who sent it (USER or SYSTEM/VA)
+  senderType        VAChatSenderType
+  
+  message           String @db.Text
+  messageType       VAChatMessageType @default(TEXT)
+  
+  // If VA sends options (checkpoint confirmations)
+  actionRequired    Boolean @default(false)
+  actionType        String? // "CONFIRM_UNDERSTANDING", "SELECT_CUSTOMIZATION", etc.
+  
+  createdAt         DateTime @default(now())
+  
+  @@index([chatId])
+  @@index([createdAt])
+  @@map("virtual_assistant_chat_messages")
+}
+
+enum VAChatSenderType {
+  USER
+  VIRTUAL_ASSISTANT
+}
+
+enum VAChatMessageType {
+  TEXT
+  SYSTEM_MESSAGE          // "Please confirm you understand"
+  CUSTOMIZATION_OPTIONS   // Shows color/size choices
+  PAYMENT_CONFIRMATION    // Shows total price
+  FINAL_CONFIRMATION      // "Ready to proceed?"
 }
 
 // ==================== ANALYTICS / ENGAGEMENT ====================
@@ -439,6 +772,75 @@ model ViewingFeePayment {
   @@map("viewing_fee_payments")
 }
 
+// NEW: Reservation Fee Payments for Real Estate (House Renting/Selling)
+model ReservationFeePayment {
+  id                String                @id @default(uuid()) @db.Uuid
+  
+  // User & Property
+  userId            String                @db.Uuid
+  user              User                  @relation("ReservationFeePayments", fields: [userId], references: [id], onDelete: Cascade)
+  propertyId        String                @db.Uuid
+  property          Item                  @relation("PropertyReservationFees", fields: [propertyId], references: [id], onDelete: Cascade)
+  
+  // Payment details (₦10,000 non-refundable reservation fee)
+  amount            Float                 @default(10000)  // ₦10,000 NON-REFUNDABLE
+  paystackReference String                @unique
+  status            PaymentStatus         @default(PENDING)
+  paidAt            DateTime?
+  
+  // H12 keeps 100% of reservation fee (NO refunds)
+  h12KeepsAmount    Float                 // H12 keeps 100% (non-refundable)
+  
+  // Agent fee (only paid if deal completes, not on reservation)
+  agentFeeAmount    Float?                // Agent commission paid after deal success
+  agentFeePaidAt    DateTime?
+  
+  metadata          Json?
+  
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  
+  @@index([userId])
+  @@index([propertyId])
+  @@index([status])
+  @@map("reservation_fee_payments")
+}
+
+enum ReservationFeeStatus {
+  PENDING
+  PAID
+  REFUNDED
+}
+
+// NEW: Household items payments (similar to viewing fee payments)
+model HouseholdItemPayment {
+  id                String                @id @default(uuid()) @db.Uuid
+  
+  orderId           String                @db.Uuid
+  order             HouseholdItemOrder    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  userId            String                @db.Uuid
+  amount            Float
+  paystackReference String                @unique
+  status            PaymentStatus         @default(PENDING)
+  paidAt            DateTime?
+  
+  // Commission breakdown
+  h12CommissionPercent Float               @default(10)
+  h12CommissionAmount  Float
+  sellerAmount         Float
+  
+  metadata          Json?
+  
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  
+  @@index([orderId])
+  @@index([userId])
+  @@index([status])
+  @@map("household_item_payments")
+}
+
 // Commissions for admins/agents
 model Commission {
   id        String           @id @default(uuid()) @db.Uuid
@@ -478,6 +880,8 @@ model AuditLog {
   @@index([createdAt])
   @@map("audit_logs")
 }
+
+// ==================== LANDLORD & VERIFICATION ====================
 
 model Landlord {
   id       String  @id @default(uuid()) @db.Uuid
@@ -570,7 +974,7 @@ model TermsAgreement {
   id           String   @id @default(uuid()) @db.Uuid
   userId       String   @db.Uuid
   propertyId   String?  @db.Uuid
-  termsVersion String // so updates don’t break legality
+  termsVersion String // so updates don't break legality
   agreedAt     DateTime @default(now())
   ipAddress    String?
   userAgent    String?

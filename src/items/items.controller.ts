@@ -197,4 +197,36 @@ getItemForEdit(@Param('id') id: string, @Req() req) {
     const user = req.user as { id: string };
     return this.itemsService.updateOwnItem(id, dto, user.id);
   }
+
+  // ============================
+// REAL ESTATE RESERVATION FEE
+// ============================
+
+@UseGuards(JwtAuthGuard)
+@Post(':id/reserve')
+reserveProperty(
+  @Param('id') propertyId: string,
+  @Req() req,
+) {
+  const user = req.user as { id: string };
+  return this.itemsService.reserveProperty(propertyId, user.id);
+}
+
+@UseGuards(JwtAuthGuard)
+@Get(':id/reservation-status')
+getReservationStatus(@Param('id') propertyId: string, @Req() req) {
+  const user = req.user as { id: string };
+  return this.itemsService.getReservationStatus(propertyId, user.id);
+}
+
+@UseGuards(JwtAuthGuard)
+@Post(':id/cancel-reservation')
+cancelReservation(
+  @Param('id') propertyId: string,
+  @Req() req,
+  @Body('reason') reason?: string,
+) {
+  const user = req.user as { id: string };
+  return this.itemsService.cancelReservation(propertyId, user.id, reason);
+}
 }
