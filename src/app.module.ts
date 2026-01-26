@@ -15,8 +15,9 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { PaymentModule } from './payment/payment.module';
 import { LandlordsModule } from './landlords/landlords.module';
 import { TermsModule } from './terms/terms.module';
-
-
+import { ChatsModule } from './agent-user-chat/agent-user-chat.module';
+import { AgentsModule } from './agents/agent.module';
+import { RatingsModule } from './ratings/rating.module';
 
 
 @Module({
@@ -53,6 +54,9 @@ import { TermsModule } from './terms/terms.module';
     PaymentModule,
     LandlordsModule,
     TermsModule,
+    ChatsModule,
+    AgentsModule,
+    RatingsModule,
   ],
   controllers: [AppController],
   providers: [

@@ -81,6 +81,20 @@ model User {
   // NEW: Reserved properties (real estate reservation fee)
   reservedProperties Item[] @relation("ReservationUser")
   reservationFeePayments ReservationFeePayment[] @relation("ReservationFeePayments")
+  
+  // NEW: Chat System - Real Estate
+  chatsAsUser               Chat[]                @relation("ChatUser")
+  chatsAsAgent              Chat[]                @relation("ChatAgent")
+  chatsClosedByAdmin        Chat[]                @relation("ChatClosedByAdmin")
+  sentChatMessages          ChatMessageModel[]    @relation("ChatMessageSender")
+  ratingsGiven              UserRating[]          @relation("UserGivenRatings")
+  ratingsReceived           UserRating[]          @relation("UserReceivedRatings")
+  agentStats                AgentStatistics?      @relation("AgentStats")
+  activityLogs              AgentActivityLog[]    @relation("AgentActivityLogs")
+  reportsFiled              ConversationReport[]  @relation("UserReports")
+  reportedFor               ConversationReport[]  @relation("AgentReportedFor")
+  reportsReviewed           ConversationReport[]  @relation("AdminReviews")
+  agentFeePayments          AgentFeePayment[]     @relation("AgentFeePayments")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -186,6 +200,9 @@ model Item {
   
   // Reservation fee payments
   reservationFeePayments  ReservationFeePayment[] @relation("PropertyReservationFees")
+  
+  // NEW: Chat System
+  chats                   Chat[]                  @relation("ChatProperty")
 
   isDeleted      Boolean   @default(false)
   deletedAt      DateTime?
@@ -516,16 +533,350 @@ enum VAChatMessageType {
   FINAL_CONFIRMATION      // "Ready to proceed?"
 }
 
+// ==================== CHAT SYSTEM - REAL ESTATE ====================
+
+enum ChatStatus {
+  OPEN                    // Chat just created, agent hasn't responded
+  ACTIVE                  // Agent has engaged with user
+  PAYMENT_RECEIVED        // Admin confirmed payment received
+  CLOSED                  // Chat closed by admin
+  CANCELLED               // User cancelled before completion
+}
+
+enum ChatMessageType {
+  TEXT                    // Normal message
+  SYSTEM                  // System notification
+  ADMIN_NOTIFICATION      // Admin alert
+  AGENT_NOTIFICATION      // Agent specific notification
+}
+
+enum AgentActionType {
+  CHAT_ASSIGNED           // Chat assigned to agent
+  MESSAGE_SENT            // Agent sent message
+  MESSAGE_READ            // Agent read user message
+  FIRST_RESPONSE          // Agent's first response
+  CALL_INITIATED          // Agent called user
+  CALL_ENDED              // Call ended
+  PAYMENT_CONFIRMED       // Admin confirmed payment
+  CHAT_CLOSED             // Chat closed
+}
+
+enum AgentPaymentStatus {
+  PENDING                 // Waiting for user payment
+  PAYMENT_RECEIVED        // User payment confirmed by admin
+  AGENT_PAID              // Agent has been paid
+  CANCELLED               // Transaction cancelled
+  FAILED                  // Payment failed
+}
+
+enum UserRatingCategory {
+  RESPONSIVENESS
+  PROFESSIONALISM
+  HELPFULNESS
+  KNOWLEDGE
+  TRUSTWORTHINESS
+  OVERALL
+}
+
+enum ReportReason {
+  UNPROFESSIONAL_CONDUCT
+  UNRESPONSIVE
+  MISLEADING_INFORMATION
+  FRAUD_ATTEMPT
+  OTHER
+}
+
+model Chat {
+  id                        String                @id @default(uuid()) @db.Uuid
+  
+  // Core relationships
+  userId                    String                @db.Uuid
+  user                      User                  @relation("ChatUser", fields: [userId], references: [id], onDelete: Cascade)
+  
+  agentId                   String                @db.Uuid
+  agent                     User                  @relation("ChatAgent", fields: [agentId], references: [id], onDelete: Cascade)
+  
+  propertyId                String                @db.Uuid
+  property                  Item                  @relation("ChatProperty", fields: [propertyId], references: [id], onDelete: Cascade)
+  
+  // Chat status
+  status                    ChatStatus            @default(OPEN)
+  
+  // Messages
+  messages                  ChatMessageModel[]
+  
+  // Agent responsiveness tracking
+  createdAt                 DateTime              @default(now())
+  firstAgentResponseAt      DateTime?             // When agent first responded
+  lastAgentResponseAt       DateTime?             // Latest agent response
+  agentResponseCount        Int                   @default(0)
+  agentFeePayment           AgentFeePayment?      @relation("AgentFeePayment")
+  
+  // User activity
+  userMessageCount          Int                   @default(0)
+  lastUserMessageAt         DateTime?
+  
+  // Agent performance metrics
+  averageResponseTimeMinutes Int?                 // Time between user msg and agent response
+  wasAgentResponsive        Boolean               @default(false) // True if responded within 24h
+  agentMissedFirstResponse  Boolean               @default(false) // Didn't respond in 24h
+  
+  // Payment tracking
+  paymentReceivedAt         DateTime?             // When admin marked payment received
+  agentPaymentStatus        AgentPaymentStatus    @default(PENDING)
+  
+  // Agent fee details (shown in chat for transparency)
+  agentFeeAmount            Float?                // Amount agent will receive
+  agentFeePercentage        Float?                // Percentage of deal (e.g., 10%)
+  agentPaymentAccountDetails Json?                // { bankName, accountNumber, accountName }
+  agentPaidAt               DateTime?
+  
+  // Chat closure
+  closedAt                  DateTime?
+  closedByAdminId           String?               @db.Uuid
+  closedByAdmin             User?                 @relation("ChatClosedByAdmin", fields: [closedByAdminId], references: [id])
+  closureReason             String?               // PAYMENT_RECEIVED, USER_CANCELLED, AGENT_INACTIVE
+  
+  // User rating & review
+  userRating                UserRating?
+  
+  // Reports
+  reports                   ConversationReport[]
+  
+  // Activity logs
+  activityLogs              AgentActivityLog[]
+  
+  updatedAt                 DateTime              @updatedAt
+  
+  @@index([userId])
+  @@index([agentId])
+  @@index([propertyId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([paymentReceivedAt])
+  @@map("chats")
+}
+
+model ChatMessageModel {
+  id                        String                @id @default(uuid()) @db.Uuid
+  
+  chatId                    String                @db.Uuid
+  chat                      Chat                  @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  
+  // Who sent it
+  senderId                  String                @db.Uuid
+  sender                    User                  @relation("ChatMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  
+  // Message content
+  message                   String                @db.Text
+  messageType               ChatMessageType       @default(TEXT)
+  
+  // Message read tracking
+  readAt                    DateTime?             // When recipient read message
+  
+  // Metadata for audit trail
+  metadata                  Json?                 // { ipAddress, deviceInfo, location }
+  
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+  
+  @@index([chatId])
+  @@index([senderId])
+  @@index([createdAt])
+  @@map("chat_messages_model")
+}
+
+model UserRating {
+  id                        String                @id @default(uuid()) @db.Uuid
+  
+  chatId                    String                @db.Uuid @unique
+  chat                      Chat                  @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  
+  userId                    String                @db.Uuid
+  user                      User                  @relation("UserGivenRatings", fields: [userId], references: [id], onDelete: Cascade)
+  
+  agentId                   String                @db.Uuid
+  agent                     User                  @relation("UserReceivedRatings", fields: [agentId], references: [id], onDelete: Cascade)
+  
+  // Rating categories (1-5 stars)
+  responsivenessRating      Int?                  // 1-5
+  professionalismRating     Int?                  // 1-5
+  helpfulnessRating         Int?                  // 1-5
+  knowledgeRating           Int?                  // 1-5
+  trustworthinessRating     Int?                  // 1-5
+  overallRating             Int                   // 1-5 REQUIRED
+  
+  // Review text
+  reviewText                String?               @db.Text
+  
+  // Tip for good service
+  tipAmount                 Float?                // User can tip agent
+  tipPaid                   Boolean               @default(false)
+  tipPaidAt                 DateTime?
+  
+  // Admin follow-up
+  adminRequestedRating      Boolean               @default(false)
+  adminRequestedAt          DateTime?
+  
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+  
+  @@index([chatId])
+  @@index([userId])
+  @@index([agentId])
+  @@index([overallRating])
+  @@map("user_ratings")
+}
+
+model AgentStatistics {
+  id                        String                @id @default(uuid()) @db.Uuid
+  
+  agentId                   String                @db.Uuid @unique
+  agent                     User                  @relation("AgentStats", fields: [agentId], references: [id], onDelete: Cascade)
+  
+  // Chat metrics
+  totalChatsAssigned        Int                   @default(0)
+  totalChatsCompleted       Int                   @default(0)
+  totalChatsCancelled       Int                   @default(0)
+  
+  // Response metrics
+  averageResponseTimeMinutes Int?
+  responsesWithin24Hours    Int                   @default(0)
+  responsesAfter24Hours     Int                   @default(0)
+  
+  // Rating metrics
+  averageOverallRating      Float?
+  averageResponsivenessRating Float?
+  averageProfessionalismRating Float?
+  averageHelpfulnessRating  Float?
+  totalRatingsReceived      Int                   @default(0)
+  
+  // Earnings
+  totalEarnings             Float                 @default(0)
+  totalTipsEarned           Float                 @default(0)
+  
+  // Activity
+  lastActivityAt            DateTime?
+  
+  // Status
+  isActive                  Boolean               @default(true)
+  isWarned                  Boolean               @default(false)
+  banReason                 String?
+  bannedAt                  DateTime?
+  
+  updatedAt                 DateTime              @updatedAt
+  
+  @@index([agentId])
+  @@index([averageOverallRating])
+  @@map("agent_statistics")
+}
+
+model AgentActivityLog {
+  id                        String                @id @default(uuid()) @db.Uuid
+  
+  chatId                    String                @db.Uuid
+  chat                      Chat                  @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  
+  agentId                   String                @db.Uuid
+  agent                     User                  @relation("AgentActivityLogs", fields: [agentId], references: [id], onDelete: Cascade)
+  
+  // Action type
+  actionType                AgentActionType
+  
+  // Additional context
+  metadata                  Json?
+  
+  // For audit
+  ipAddress                 String?
+  userAgent                 String?
+  
+  createdAt                 DateTime              @default(now())
+  
+  @@index([chatId])
+  @@index([agentId])
+  @@index([actionType])
+  @@index([createdAt])
+  @@map("agent_activity_logs")
+}
+
+model ConversationReport {
+  id                        String                @id @default(uuid()) @db.Uuid
+  
+  chatId                    String                @db.Uuid
+  chat                      Chat                  @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  
+  userId                    String                @db.Uuid
+  user                      User                  @relation("UserReports", fields: [userId], references: [id], onDelete: Cascade)
+  
+  reportedAgentId           String                @db.Uuid
+  reportedAgent             User                  @relation("AgentReportedFor", fields: [reportedAgentId], references: [id])
+  
+  // Report details
+  reason                    ReportReason
+  description               String                @db.Text
+  
+  // Admin review
+  reviewedByAdminId         String?               @db.Uuid
+  reviewedByAdmin           User?                 @relation("AdminReviews", fields: [reviewedByAdminId], references: [id])
+  reviewedAt                DateTime?
+  adminNotes                String?
+  actionTaken               String?
+  
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+  
+  @@index([chatId])
+  @@index([userId])
+  @@index([reportedAgentId])
+  @@map("conversation_reports")
+}
+
+model AgentFeePayment {
+  id                        String                @id @default(uuid()) @db.Uuid
+  
+  chatId                    String                @db.Uuid @unique
+  chat                      Chat                  @relation("AgentFeePayment", fields: [chatId], references: [id], onDelete: Cascade)
+  agentId                   String                @db.Uuid
+  agent                     User                  @relation("AgentFeePayments", fields: [agentId], references: [id])
+  
+  // Payment details
+  amount                    Float
+  percentage                Float
+  
+  // Bank details
+  bankName                  String
+  accountNumber             String
+  accountName               String
+  
+  // Payment status
+  status                    AgentPaymentStatus    @default(PENDING)
+  
+  // Payment confirmation
+  userPaymentConfirmedAt    DateTime?
+  agentPaymentConfirmedAt   DateTime?
+  
+  // Metadata
+  metadata                  Json?
+  
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+  
+  @@index([chatId])
+  @@index([agentId])
+  @@index([status])
+  @@map("agent_fee_payments")
+}
+
 // ==================== ANALYTICS / ENGAGEMENT ====================
 
 model PropertyView {
   id         String   @id @default(uuid()) @db.Uuid
   propertyId String   @db.Uuid
-  userId     String?  @db.Uuid // Null if not logged in
-  ipAddress  String? // Track anonymous users
-  userAgent  String? // Device/browser info
-  referrer   String? // Where they came from
-  sessionId  String? // Group views in same session
+  userId     String?  @db.Uuid
+  ipAddress  String?
+  userAgent  String?
+  referrer   String?
+  sessionId  String?
   viewedAt   DateTime @default(now())
 
   property Item  @relation("PropertyViews", fields: [propertyId], references: [id], onDelete: Cascade)
@@ -724,7 +1075,7 @@ model Payment {
   status     PaymentStatus   @default(PENDING)
   amount     Float
   currency   String          @default("NGN")
-  reference  String?         @unique // Paystack ref or bank narration
+  reference  String?         @unique
   rawData    Json?
 
   createdAt DateTime @default(now())
@@ -897,9 +1248,9 @@ model Landlord {
 
   // Verification
   verificationStatus LandlordVerificationStatus @default(PENDING)
-  nationalIdUrl      String? // ID card photo
-  utilityBillUrl     String? // Proof of residence
-  cacDocUrl          String? // For corporate landlords
+  nationalIdUrl      String?
+  utilityBillUrl     String?
+  cacDocUrl          String?
 
   receiptProofs ReceiptProof[]
 
@@ -942,7 +1293,7 @@ model ReceiptProof {
   paidAt     DateTime
 
   status        ReceiptStatus @default(PENDING)
-  reviewerId    String?       @db.Uuid // finance/admin
+  reviewerId    String?       @db.Uuid
   reviewedAt    DateTime?
   reviewComment String?
 
@@ -974,7 +1325,7 @@ model TermsAgreement {
   id           String   @id @default(uuid()) @db.Uuid
   userId       String   @db.Uuid
   propertyId   String?  @db.Uuid
-  termsVersion String // so updates don't break legality
+  termsVersion String
   agreedAt     DateTime @default(now())
   ipAddress    String?
   userAgent    String?
@@ -993,7 +1344,7 @@ model TermsQuizSubmission {
   agreementId String   @db.Uuid
   score       Int
   passed      Boolean
-  answers     Json // store question-answer pairs
+  answers     Json
   submittedAt DateTime @default(now())
 
   agreement TermsAgreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)

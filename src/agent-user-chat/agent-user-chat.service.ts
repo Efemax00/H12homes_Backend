@@ -1,0 +1,719 @@
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { CreateChatDto } from './dto/create-chat.dto';
+import { SendMessageDto } from './dto/send-message.dto';
+import { MarkPaymentReceivedDto } from './dto/mark-payment-received.dto';
+import { RateAgentDto } from './dto/rate-agent.dto';
+import { ReportConversationDto } from './dto/report-conversation.dto';
+import { ChatStatus } from '@prisma/client';
+
+@Injectable()
+export class ChatsService {
+  constructor(private prisma: PrismaService) {}
+
+  /**
+   * Create chat when user pays ₦10,000 reservation fee
+   * Auto-assigns agent and creates chat record
+   */
+  async createChat(createChatDto: CreateChatDto, userId: string) {
+    const { propertyId } = createChatDto;
+
+    // Verify property exists
+    const property = await this.prisma.item.findUnique({
+      where: { id: propertyId },
+      include: { agent: true },
+    });
+
+    if (!property) {
+      throw new NotFoundException('Property not found');
+    }
+
+    // Check if user already has active chat for this property
+    const existingChat = await this.prisma.chat.findFirst({
+      where: {
+        userId,
+        propertyId,
+        status: {
+          in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[],
+        },
+      },
+    });
+
+    if (existingChat) {
+      throw new BadRequestException('You already have an active chat for this property');
+    }
+
+    // Auto-assign agent (use property agent, or pick any agent)
+    let agentId = property.agentId;
+    if (!agentId) {
+      // If property doesn't have assigned agent, pick first available admin/agent
+      const availableAgent = await this.prisma.user.findFirst({
+        where: { isAgent: true, role: 'ADMIN' },
+      });
+
+      if (!availableAgent) {
+        throw new BadRequestException('No agents available');
+      }
+      agentId = availableAgent.id;
+    }
+
+    // Calculate agent fee (10% of property price)
+    const agentFeePercentage = 10;
+    const agentFeeTotal = (property.price * agentFeePercentage) / 100;
+    const agentFeeAmount = (agentFeeTotal * 70) / 100; // Agent gets 70%
+
+    // Create chat
+    const chat = await this.prisma.chat.create({
+      data: {
+        userId,
+        agentId,
+        propertyId,
+        status: 'OPEN' as ChatStatus,
+        agentFeePercentage,
+        agentFeeAmount,
+        agentPaymentStatus: 'PENDING',
+      },
+      include: {
+        agent: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            avatarUrl: true,
+          },
+        },
+        property: {
+          select: {
+            id: true,
+            title: true,
+            price: true,
+            location: true,
+          },
+        },
+      },
+    });
+
+    // Log activity
+    await this.prisma.agentActivityLog.create({
+      data: {
+        chatId: chat.id,
+        agentId,
+        actionType: 'CHAT_ASSIGNED',
+        metadata: {
+          propertyPrice: property.price,
+          agentFeeAmount,
+        },
+      },
+    });
+
+    // Send system message
+    await this.prisma.chatMessageModel.create({
+      data: {
+        chatId: chat.id,
+        senderId: agentId,
+        message: `Welcome! I'm your H12homes agent. I'm here to help you complete this transaction. Property: ${property.title}`,
+        messageType: 'SYSTEM',
+      },
+    });
+
+    return {
+      ...chat,
+      message: 'Chat created successfully. Agent will respond shortly.',
+    };
+  }
+
+  /**
+   * Get chat details with agent info and messages
+   */
+  async getChatDetails(chatId: string, userId: string) {
+    const chat = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      include: {
+        agent: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            avatarUrl: true,
+          },
+        },
+        property: {
+          select: {
+            id: true,
+            title: true,
+            price: true,
+            location: true,
+            category: true,
+          },
+        },
+        userRating: true,
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            sender: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                avatarUrl: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!chat) {
+      throw new NotFoundException('Chat not found');
+    }
+
+    // Check authorization
+    if (chat.userId !== userId && chat.agentId !== userId) {
+      throw new ForbiddenException('Not authorized to view this chat');
+    }
+
+    // Mark messages as read
+    await this.prisma.chatMessageModel.updateMany({
+      where: { chatId, senderId: { not: userId } },
+      data: { readAt: new Date() },
+    });
+
+    return chat;
+  }
+
+  /**
+   * Get user's active chats
+   */
+  async getUserChats(userId: string, status?: ChatStatus) {
+    const whereClause = {
+      userId,
+      ...(status ? { status } : { status: { in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[] } }),
+    };
+
+    return this.prisma.chat.findMany({
+      where: whereClause,
+      include: {
+        agent: {
+          select: {
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+          },
+        },
+        property: {
+          select: {
+            title: true,
+            price: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Get agent's assigned chats
+   */
+  async getAgentChats(agentId: string, status?: ChatStatus) {
+    const whereClause = {
+      agentId,
+      ...(status ? { status } : { status: { in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[] } }),
+    };
+
+    return this.prisma.chat.findMany({
+      where: whereClause,
+      include: {
+        user: {
+          select: {
+            firstName: true,
+            lastName: true,
+            phone: true,
+            avatarUrl: true,
+          },
+        },
+        property: {
+          select: {
+            title: true,
+            price: true,
+          },
+        },
+      },
+      orderBy: { lastUserMessageAt: 'desc' },
+    });
+  }
+
+  /**
+   * Send message in chat
+   */
+  async sendMessage(chatId: string, userId: string, sendMessageDto: SendMessageDto) {
+    const { message } = sendMessageDto;
+
+    // Verify chat exists
+    const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
+    if (!chat) {
+      throw new NotFoundException('Chat not found');
+    }
+
+    // Check authorization (user or agent only)
+    if (chat.userId !== userId && chat.agentId !== userId) {
+      throw new ForbiddenException('Not authorized to send messages in this chat');
+    }
+
+    // Can't send messages if chat is closed
+    if (chat.status === 'CLOSED') {
+      throw new BadRequestException('This chat is closed. Cannot send messages.');
+    }
+
+    // Create message
+    const newMessage = await this.prisma.chatMessageModel.create({
+      data: {
+        chatId,
+        senderId: userId,
+        message,
+        messageType: 'TEXT',
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    });
+
+    // Update chat stats
+    const isAgent = chat.agentId === userId;
+    if (isAgent) {
+      // Agent responded
+      const updateData: any = {
+        lastAgentResponseAt: new Date(),
+        agentResponseCount: { increment: 1 },
+        status: 'ACTIVE' as ChatStatus,
+      };
+
+      // Track first response
+      if (!chat.firstAgentResponseAt) {
+        updateData.firstAgentResponseAt = new Date();
+        
+        // Calculate response time in minutes
+        const responseTime = Math.round(
+          (new Date().getTime() - chat.createdAt.getTime()) / (1000 * 60)
+        );
+        updateData.averageResponseTimeMinutes = responseTime;
+
+        // Check if within 24 hours
+        if (responseTime <= 1440) {
+          updateData.wasAgentResponsive = true;
+        } else {
+          updateData.agentMissedFirstResponse = true;
+        }
+      }
+
+      await this.prisma.chat.update({
+        where: { id: chatId },
+        data: updateData,
+      });
+
+      // Log agent activity
+      await this.prisma.agentActivityLog.create({
+        data: {
+          chatId,
+          agentId: userId,
+          actionType: 'MESSAGE_SENT',
+          metadata: { messageId: newMessage.id },
+        },
+      });
+    } else {
+      // User sent message
+      await this.prisma.chat.update({
+        where: { id: chatId },
+        data: {
+          userMessageCount: { increment: 1 },
+          lastUserMessageAt: new Date(),
+        },
+      });
+    }
+
+    return newMessage;
+  }
+
+  /**
+   * Get chat messages with pagination
+   */
+  async getChatMessages(chatId: string, limit: number = 50, offset: number = 0) {
+    return this.prisma.chatMessageModel.findMany({
+      where: { chatId },
+      orderBy: { createdAt: 'asc' },
+      skip: offset,
+      take: limit,
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    });
+  }
+
+  /**
+   * Admin marks payment received - AUTO CLOSES CHAT
+   */
+  async markPaymentReceived(chatId: string, adminId: string, markPaymentDto: MarkPaymentReceivedDto) {
+    const { paymentConfirmationDetails } = markPaymentDto;
+
+    const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
+    if (!chat) {
+      throw new NotFoundException('Chat not found');
+    }
+
+    // Update chat - mark payment and close immediately
+    const updatedChat = await this.prisma.chat.update({
+      where: { id: chatId },
+      data: {
+        status: 'PAYMENT_RECEIVED' as ChatStatus,
+        paymentReceivedAt: new Date(),
+        closedAt: new Date(),
+        closedByAdminId: adminId,
+        closureReason: 'PAYMENT_RECEIVED',
+        agentPaymentStatus: 'PAYMENT_RECEIVED',
+      },
+      include: {
+        agent: true,
+        user: true,
+        property: true,
+      },
+    });
+
+    // Log activity
+    await this.prisma.agentActivityLog.create({
+      data: {
+        chatId,
+        agentId: chat.agentId,
+        actionType: 'PAYMENT_CONFIRMED',
+        metadata: { confirmedBy: adminId, details: paymentConfirmationDetails },
+      },
+    });
+
+    // Send system message to both
+    await this.prisma.chatMessageModel.create({
+      data: {
+        chatId,
+        senderId: adminId,
+        message: `✅ Payment confirmed! This chat is now closed. Thank you for using H12homes. ${updatedChat.agent.firstName}, agent fee of ₦${updatedChat.agentFeeAmount?.toLocaleString()} will be processed.`,
+        messageType: 'ADMIN_NOTIFICATION',
+      },
+    });
+
+    // Update agent statistics
+    await this.updateAgentStats(chat.agentId, {
+      totalChatsCompleted: 1,
+      totalEarnings: updatedChat.agentFeeAmount || 0,
+    });
+
+    return {
+      ...updatedChat,
+      message: 'Chat closed. Agent will be paid shortly.',
+    };
+  }
+
+  /**
+   * Rate agent after chat closes
+   */
+  async rateAgent(chatId: string, userId: string, rateAgentDto: RateAgentDto) {
+    const chat = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+    });
+
+    if (!chat) {
+      throw new NotFoundException('Chat not found');
+    }
+
+    if (chat.userId !== userId) {
+      throw new ForbiddenException('Only the user can rate the agent');
+    }
+
+    if (chat.status !== 'CLOSED') {
+      throw new BadRequestException('Can only rate after chat is closed');
+    }
+
+    // Check if already rated
+    const existingRating = await this.prisma.userRating.findUnique({
+      where: { chatId },
+    });
+
+    if (existingRating) {
+      throw new BadRequestException('You have already rated this agent for this chat');
+    }
+
+    // Create rating
+    const rating = await this.prisma.userRating.create({
+      data: {
+        chatId,
+        userId,
+        agentId: chat.agentId,
+        responsivenessRating: rateAgentDto.responsivenessRating,
+        professionalismRating: rateAgentDto.professionalismRating,
+        helpfulnessRating: rateAgentDto.helpfulnessRating,
+        knowledgeRating: rateAgentDto.knowledgeRating,
+        trustworthinessRating: rateAgentDto.trustworthinessRating,
+        overallRating: rateAgentDto.overallRating,
+        reviewText: rateAgentDto.reviewText,
+        tipAmount: rateAgentDto.tipAmount,
+      },
+    });
+
+    // Update agent statistics
+    await this.updateAgentStats(chat.agentId, {
+      totalRatingsReceived: 1,
+      totalTipsEarned: rateAgentDto.tipAmount || 0,
+    });
+
+    return {
+      rating,
+      message: 'Thank you for rating! Your feedback helps us improve.',
+    };
+  }
+
+  /**
+   * User reports conversation
+   */
+  async reportConversation(
+    chatId: string,
+    userId: string,
+    reportDto: ReportConversationDto,
+  ) {
+    const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
+
+    if (!chat) {
+      throw new NotFoundException('Chat not found');
+    }
+
+    if (chat.userId !== userId) {
+      throw new ForbiddenException('Only the user can report this conversation');
+    }
+
+    const report = await this.prisma.conversationReport.create({
+      data: {
+        chatId,
+        userId,
+        reportedAgentId: chat.agentId,
+        reason: reportDto.reason,
+        description: reportDto.description,
+      },
+    });
+
+    return {
+      report,
+      message: 'Report submitted. Our team will review and take action.',
+    };
+  }
+
+  /**
+   * Request user to rate agent
+   */
+  async requestRating(chatId: string, adminId: string) {
+    const chat = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      include: { 
+        userRating: true,
+        agent: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    });
+
+    if (!chat) {
+      throw new NotFoundException('Chat not found');
+    }
+
+    if (chat.userRating) {
+      throw new BadRequestException('User already submitted rating');
+    }
+
+    // Update rating request flag
+    await this.prisma.userRating.upsert({
+      where: { chatId },
+      create: {
+        chatId,
+        userId: chat.userId,
+        agentId: chat.agentId,
+        overallRating: 0, // Placeholder
+        adminRequestedRating: true,
+        adminRequestedAt: new Date(),
+      },
+      update: {
+        adminRequestedRating: true,
+        adminRequestedAt: new Date(),
+      },
+    });
+
+    // Send message to user
+    await this.prisma.chatMessageModel.create({
+      data: {
+        chatId,
+        senderId: adminId,
+        message: `Please rate your experience with our agent ${chat.agent?.firstName}. Your feedback helps us improve our service.`,
+        messageType: 'ADMIN_NOTIFICATION',
+      },
+    });
+
+    return { message: 'Rating request sent to user' };
+  }
+
+  /**
+   * Helper: Update agent statistics
+   */
+  private async updateAgentStats(
+    agentId: string,
+    updates: {
+      totalChatsCompleted?: number;
+      totalEarnings?: number;
+      totalRatingsReceived?: number;
+      totalTipsEarned?: number;
+    },
+  ) {
+    let stats = await this.prisma.agentStatistics.findUnique({
+      where: { agentId },
+    });
+
+    if (!stats) {
+      stats = await this.prisma.agentStatistics.create({
+        data: { agentId },
+      });
+    }
+
+    await this.prisma.agentStatistics.update({
+      where: { agentId },
+      data: {
+        totalChatsCompleted: (stats.totalChatsCompleted || 0) + (updates.totalChatsCompleted || 0),
+        totalEarnings: (stats.totalEarnings || 0) + (updates.totalEarnings || 0),
+        totalRatingsReceived: (stats.totalRatingsReceived || 0) + (updates.totalRatingsReceived || 0),
+        totalTipsEarned: (stats.totalTipsEarned || 0) + (updates.totalTipsEarned || 0),
+        lastActivityAt: new Date(),
+      },
+    });
+  }
+
+  /**
+   * Admin: Get all chats with filters
+   */
+  async getAllChats(
+    status?: ChatStatus,
+    agentId?: string,
+    limit: number = 20,
+    offset: number = 0,
+  ) {
+    const whereClause: any = {};
+    if (status) whereClause.status = status;
+    if (agentId) whereClause.agentId = agentId;
+
+    return this.prisma.chat.findMany({
+      where: whereClause,
+      include: {
+        user: {
+          select: {
+            firstName: true,
+            lastName: true,
+            phone: true,
+          },
+        },
+        agent: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
+        property: {
+          select: {
+            title: true,
+            price: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: offset,
+      take: limit,
+    });
+  }
+
+  /**
+   * Admin: Get chats pending payment closure
+   */
+  async getPendingPaymentChats() {
+    return this.prisma.chat.findMany({
+      where: {
+        status: 'ACTIVE' as ChatStatus,
+        paymentReceivedAt: null,
+      },
+      include: {
+        user: {
+          select: {
+            firstName: true,
+            lastName: true,
+            phone: true,
+          },
+        },
+        agent: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
+        property: {
+          select: {
+            title: true,
+            price: true,
+          },
+        },
+      },
+      orderBy: { lastUserMessageAt: 'desc' },
+    });
+  }
+
+  /**
+   * Admin: Get chats waiting for rating request
+   */
+  async getChatsAwaitingRating() {
+    return this.prisma.chat.findMany({
+      where: {
+        status: 'CLOSED' as ChatStatus,
+        userRating: {
+          adminRequestedRating: false,
+        },
+      },
+      include: {
+        user: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
+        agent: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
+        property: {
+          select: {
+            title: true,
+          },
+        },
+      },
+    });
+  }
+}
