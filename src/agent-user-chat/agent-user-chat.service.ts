@@ -43,36 +43,42 @@ export class ChatsService {
       throw new BadRequestException('You already have an active chat for this property');
     }
 
-    // Auto-assign agent (use property agent, or pick any agent)
-    let agentId = property.agentId;
-    if (!agentId) {
-      // If property doesn't have assigned agent, pick first available admin/agent
-      const availableAgent = await this.prisma.user.findFirst({
-        where: { isAgent: true, role: 'ADMIN' },
-      });
+    // Determine chat type: VA or direct agent
+    const chatType = createChatDto.chatType || 'VA'; // Default to VA
 
-      if (!availableAgent) {
-        throw new BadRequestException('No agents available');
+    let agentId: string | null = null;
+
+    // If direct agent chat, use property's agent
+    if (chatType === 'AGENT') {
+      if (!property.agentId) {
+        throw new BadRequestException('This property has no agent assigned');
       }
-      agentId = availableAgent.id;
+      agentId = property.agentId;
     }
+    // If VA chat (default), agentId stays null
 
     // Calculate agent fee (10% of property price)
     const agentFeePercentage = 10;
     const agentFeeTotal = (property.price * agentFeePercentage) / 100;
     const agentFeeAmount = (agentFeeTotal * 70) / 100; // Agent gets 70%
 
-    // Create chat
+    // Create chat - FIX: Use proper conditional for optional agentId
+    const chatData: any = {
+      userId,
+      propertyId,
+      status: 'OPEN' as ChatStatus,
+      agentFeePercentage,
+      agentFeeAmount,
+      agentPaymentStatus: 'PENDING',
+    };
+
+    // Only add agentId if it's not null
+    if (agentId) {
+      chatData.agentId = agentId;
+    }
+
     const chat = await this.prisma.chat.create({
-      data: {
-        userId,
-        agentId,
-        propertyId,
-        status: 'OPEN' as ChatStatus,
-        agentFeePercentage,
-        agentFeeAmount,
-        agentPaymentStatus: 'PENDING',
-      },
+      data: chatData,
       include: {
         agent: {
           select: {
@@ -95,28 +101,43 @@ export class ChatsService {
       },
     });
 
-    // Log activity
-    await this.prisma.agentActivityLog.create({
-      data: {
-        chatId: chat.id,
-        agentId,
-        actionType: 'CHAT_ASSIGNED',
-        metadata: {
-          propertyPrice: property.price,
-          agentFeeAmount,
+    // Log activity (only for agent chats)
+    if (agentId) {
+      await this.prisma.agentActivityLog.create({
+        data: {
+          chatId: chat.id,
+          agentId,
+          actionType: 'CHAT_ASSIGNED',
+          metadata: {
+            propertyPrice: property.price,
+            agentFeeAmount,
+          },
         },
-      },
-    });
+      });
+    }
 
-    // Send system message
-    await this.prisma.chatMessageModel.create({
-      data: {
-        chatId: chat.id,
-        senderId: agentId,
-        message: `Welcome! I'm your H12homes agent. I'm here to help you complete this transaction. Property: ${property.title}`,
-        messageType: 'SYSTEM',
-      },
-    });
+    // Send system message based on chat type
+    if (chatType === 'VA') {
+      // VA chat - message from system
+      await this.prisma.chatMessageModel.create({
+        data: {
+          chatId: chat.id,
+          senderId: userId,
+          message: `Hi! 👋 I'm your Virtual Assistant. I'm here to help you with this property. How can I assist you today?`,
+          messageType: 'SYSTEM',
+        },
+      });
+    } else {
+      // Agent chat - message from agent
+      await this.prisma.chatMessageModel.create({
+        data: {
+          chatId: chat.id,
+          senderId: agentId!, // agentId is guaranteed to exist in AGENT chat type
+          message: `Welcome! I'm your H12homes agent. I'm here to help you complete this transaction. Property: ${property.title}`,
+          messageType: 'SYSTEM',
+        },
+      });
+    }
 
     return {
       ...chat,
@@ -301,7 +322,7 @@ export class ChatsService {
       // Track first response
       if (!chat.firstAgentResponseAt) {
         updateData.firstAgentResponseAt = new Date();
-        
+
         // Calculate response time in minutes
         const responseTime = Math.round(
           (new Date().getTime() - chat.createdAt.getTime()) / (1000 * 60)
@@ -396,30 +417,38 @@ export class ChatsService {
     });
 
     // Log activity
-    await this.prisma.agentActivityLog.create({
-      data: {
-        chatId,
-        agentId: chat.agentId,
-        actionType: 'PAYMENT_CONFIRMED',
-        metadata: { confirmedBy: adminId, details: paymentConfirmationDetails },
-      },
-    });
+    if (chat.agentId) {
+      await this.prisma.agentActivityLog.create({
+        data: {
+          chatId,
+          agentId: chat.agentId,
+          actionType: 'PAYMENT_CONFIRMED',
+          metadata: { confirmedBy: adminId, details: paymentConfirmationDetails },
+        },
+      });
+    }
 
     // Send system message to both
+    const agentFeeMessage = updatedChat.agentFeeAmount
+      ? ` ${updatedChat.agent?.firstName}, agent fee of ₦${updatedChat.agentFeeAmount?.toLocaleString()} will be processed.`
+      : '';
+
     await this.prisma.chatMessageModel.create({
       data: {
         chatId,
         senderId: adminId,
-        message: `✅ Payment confirmed! This chat is now closed. Thank you for using H12homes. ${updatedChat.agent.firstName}, agent fee of ₦${updatedChat.agentFeeAmount?.toLocaleString()} will be processed.`,
+        message: `✅ Payment confirmed! This chat is now closed. Thank you for using H12homes.${agentFeeMessage}`,
         messageType: 'ADMIN_NOTIFICATION',
       },
     });
 
-    // Update agent statistics
-    await this.updateAgentStats(chat.agentId, {
-      totalChatsCompleted: 1,
-      totalEarnings: updatedChat.agentFeeAmount || 0,
-    });
+    // Update agent statistics (only if agent exists)
+    if (chat.agentId) {
+      await this.updateAgentStats(chat.agentId, {
+        totalChatsCompleted: 1,
+        totalEarnings: updatedChat.agentFeeAmount || 0,
+      });
+    }
 
     return {
       ...updatedChat,
@@ -473,11 +502,13 @@ export class ChatsService {
       },
     });
 
-    // Update agent statistics
-    await this.updateAgentStats(chat.agentId, {
-      totalRatingsReceived: 1,
-      totalTipsEarned: rateAgentDto.tipAmount || 0,
-    });
+    // Update agent statistics (only if agent exists)
+    if (chat.agentId) {
+      await this.updateAgentStats(chat.agentId, {
+        totalRatingsReceived: 1,
+        totalTipsEarned: rateAgentDto.tipAmount || 0,
+      });
+    }
 
     return {
       rating,
@@ -525,7 +556,7 @@ export class ChatsService {
   async requestRating(chatId: string, adminId: string) {
     const chat = await this.prisma.chat.findUnique({
       where: { id: chatId },
-      include: { 
+      include: {
         userRating: true,
         agent: {
           select: {
@@ -545,20 +576,24 @@ export class ChatsService {
     }
 
     // Update rating request flag
+    const ratingData: any = {
+      userId: chat.userId,
+      overallRating: 0, // Placeholder
+      adminRequestedRating: true,
+      adminRequestedAt: new Date(),
+    };
+
+    if (chat.agentId) {
+      ratingData.agentId = chat.agentId;
+    }
+
     await this.prisma.userRating.upsert({
       where: { chatId },
       create: {
         chatId,
-        userId: chat.userId,
-        agentId: chat.agentId,
-        overallRating: 0, // Placeholder
-        adminRequestedRating: true,
-        adminRequestedAt: new Date(),
+        ...ratingData,
       },
-      update: {
-        adminRequestedRating: true,
-        adminRequestedAt: new Date(),
-      },
+      update: ratingData,
     });
 
     // Send message to user
@@ -566,7 +601,7 @@ export class ChatsService {
       data: {
         chatId,
         senderId: adminId,
-        message: `Please rate your experience with our agent ${chat.agent?.firstName}. Your feedback helps us improve our service.`,
+        message: `Please rate your experience with our agent ${chat.agent?.firstName || 'our team'}. Your feedback helps us improve our service.`,
         messageType: 'ADMIN_NOTIFICATION',
       },
     });

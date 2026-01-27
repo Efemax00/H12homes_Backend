@@ -1,6 +1,11 @@
+import { IsEnum, IsOptional } from "class-validator";
+
 // create-chat.dto.ts
 export class CreateChatDto {
   propertyId: string;
   userId?: string;
-  // userId is added from CurrentUser decorator
+  @IsOptional()
+  @IsEnum(['VA', 'AGENT'])
+  chatType?: string; // 'VA' or 'AGENT'
+  
 }

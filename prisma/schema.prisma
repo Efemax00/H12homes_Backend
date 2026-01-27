@@ -836,8 +836,8 @@ model AgentFeePayment {
   
   chatId                    String                @db.Uuid @unique
   chat                      Chat                  @relation("AgentFeePayment", fields: [chatId], references: [id], onDelete: Cascade)
-  agentId                   String                @db.Uuid
-  agent                     User                  @relation("AgentFeePayments", fields: [agentId], references: [id])
+  agentId                   String                @db.Uuid  
+  agent                     User                  @relation("AgentFeePayments", fields: [agentId], references: [id], onDelete: Cascade)
   
   // Payment details
   amount                    Float
