@@ -64,20 +64,21 @@ async initializeReservationFee(
 }
 
   /**
-   * Verify viewing fee payment after Paystack callback
-   * GET /payment/viewing-fee/verify?reference=VF-xxx
+   * Verify reservation fee payment after Paystack callback
+   * GET /payment/reservation-fee/verify?reference=VF-xxx
    */
-  @Get('viewing-fee/verify')
-  async verifyViewingFee(@Query('reference') reference: string) {
-    if (!reference) {
-      throw new BadRequestException('Payment reference is required');
-    }
-    return this.reservationFeePaymentService.verifyReservationFee(reference);
+  @Get('reservation-fee/verify')
+async verifyReservationFee(@Query('reference') reference: string) {
+  if (!reference) {
+    throw new BadRequestException('Payment reference is required');
   }
+  return this.reservationFeePaymentService.verifyReservationFee(reference);
+}
+
 
   /**
-   * Check if user has already paid viewing fee for a property
-   * GET /payment/viewing-fee/check?propertyId=xxx
+   * Check if user has already paid reservation fee for a property
+   * GET /payment/reservation-fee/check?propertyId=xxx
    */
   @Get('reservation-fee/check')
 async checkReservation(
@@ -97,7 +98,7 @@ async checkReservation(
   return { hasActiveReservation };
 }
 
-// OLD: @Get('viewing-fee/my-payments')
+// OLD: @Get('reservation-fee/my-payments')
 // NEW:
 @Get('reservation-fee/my-payments')
 async getMyReservationPayments(@Req() req) {

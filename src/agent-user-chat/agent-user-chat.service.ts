@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateChatDto } from './dto/create-chat.dto';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -40,7 +45,9 @@ export class ChatsService {
     });
 
     if (existingChat) {
-      throw new BadRequestException('You already have an active chat for this property');
+      throw new BadRequestException(
+        'You already have an active chat for this property',
+      );
     }
 
     // Determine chat type: VA or direct agent
@@ -212,7 +219,13 @@ export class ChatsService {
   async getUserChats(userId: string, status?: ChatStatus) {
     const whereClause = {
       userId,
-      ...(status ? { status } : { status: { in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[] } }),
+      ...(status
+        ? { status }
+        : {
+            status: {
+              in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[],
+            },
+          }),
     };
 
     return this.prisma.chat.findMany({
@@ -242,7 +255,13 @@ export class ChatsService {
   async getAgentChats(agentId: string, status?: ChatStatus) {
     const whereClause = {
       agentId,
-      ...(status ? { status } : { status: { in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[] } }),
+      ...(status
+        ? { status }
+        : {
+            status: {
+              in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[],
+            },
+          }),
     };
 
     return this.prisma.chat.findMany({
@@ -270,7 +289,11 @@ export class ChatsService {
   /**
    * Send message in chat
    */
-  async sendMessage(chatId: string, userId: string, sendMessageDto: SendMessageDto) {
+  async sendMessage(
+    chatId: string,
+    userId: string,
+    sendMessageDto: SendMessageDto,
+  ) {
     const { message } = sendMessageDto;
 
     // Verify chat exists
@@ -281,12 +304,16 @@ export class ChatsService {
 
     // Check authorization (user or agent only)
     if (chat.userId !== userId && chat.agentId !== userId) {
-      throw new ForbiddenException('Not authorized to send messages in this chat');
+      throw new ForbiddenException(
+        'Not authorized to send messages in this chat',
+      );
     }
 
     // Can't send messages if chat is closed
     if (chat.status === 'CLOSED') {
-      throw new BadRequestException('This chat is closed. Cannot send messages.');
+      throw new BadRequestException(
+        'This chat is closed. Cannot send messages.',
+      );
     }
 
     // Create message
@@ -325,7 +352,7 @@ export class ChatsService {
 
         // Calculate response time in minutes
         const responseTime = Math.round(
-          (new Date().getTime() - chat.createdAt.getTime()) / (1000 * 60)
+          (new Date().getTime() - chat.createdAt.getTime()) / (1000 * 60),
         );
         updateData.averageResponseTimeMinutes = responseTime;
 
@@ -368,7 +395,11 @@ export class ChatsService {
   /**
    * Get chat messages with pagination
    */
-  async getChatMessages(chatId: string, limit: number = 50, offset: number = 0) {
+  async getChatMessages(
+    chatId: string,
+    limit: number = 50,
+    offset: number = 0,
+  ) {
     return this.prisma.chatMessageModel.findMany({
       where: { chatId },
       orderBy: { createdAt: 'asc' },
@@ -390,7 +421,11 @@ export class ChatsService {
   /**
    * Admin marks payment received - AUTO CLOSES CHAT
    */
-  async markPaymentReceived(chatId: string, adminId: string, markPaymentDto: MarkPaymentReceivedDto) {
+  async markPaymentReceived(
+    chatId: string,
+    adminId: string,
+    markPaymentDto: MarkPaymentReceivedDto,
+  ) {
     const { paymentConfirmationDetails } = markPaymentDto;
 
     const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
@@ -423,7 +458,10 @@ export class ChatsService {
           chatId,
           agentId: chat.agentId,
           actionType: 'PAYMENT_CONFIRMED',
-          metadata: { confirmedBy: adminId, details: paymentConfirmationDetails },
+          metadata: {
+            confirmedBy: adminId,
+            details: paymentConfirmationDetails,
+          },
         },
       });
     }
@@ -482,7 +520,15 @@ export class ChatsService {
     });
 
     if (existingRating) {
-      throw new BadRequestException('You have already rated this agent for this chat');
+      throw new BadRequestException(
+        'You have already rated this agent for this chat',
+      );
+    }
+
+    if (!chat.agentId) {
+      throw new BadRequestException(
+        'This chat has no agent assigned. You cannot rate an agent.',
+      );
     }
 
     // Create rating
@@ -531,9 +577,18 @@ export class ChatsService {
     }
 
     if (chat.userId !== userId) {
-      throw new ForbiddenException('Only the user can report this conversation');
+      throw new ForbiddenException(
+        'Only the user can report this conversation',
+      );
     }
 
+    if (!chat.agentId) {
+      throw new BadRequestException(
+        'This chat has no agent assigned. You cannot report an agent.',
+      );
+    }
+
+    // Create report
     const report = await this.prisma.conversationReport.create({
       data: {
         chatId,
@@ -634,10 +689,15 @@ export class ChatsService {
     await this.prisma.agentStatistics.update({
       where: { agentId },
       data: {
-        totalChatsCompleted: (stats.totalChatsCompleted || 0) + (updates.totalChatsCompleted || 0),
-        totalEarnings: (stats.totalEarnings || 0) + (updates.totalEarnings || 0),
-        totalRatingsReceived: (stats.totalRatingsReceived || 0) + (updates.totalRatingsReceived || 0),
-        totalTipsEarned: (stats.totalTipsEarned || 0) + (updates.totalTipsEarned || 0),
+        totalChatsCompleted:
+          (stats.totalChatsCompleted || 0) + (updates.totalChatsCompleted || 0),
+        totalEarnings:
+          (stats.totalEarnings || 0) + (updates.totalEarnings || 0),
+        totalRatingsReceived:
+          (stats.totalRatingsReceived || 0) +
+          (updates.totalRatingsReceived || 0),
+        totalTipsEarned:
+          (stats.totalTipsEarned || 0) + (updates.totalTipsEarned || 0),
         lastActivityAt: new Date(),
       },
     });

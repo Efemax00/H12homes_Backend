@@ -148,6 +148,25 @@ export class ReservationFeePaymentService {
       };
     }
 
+    // after verified = await this.paystack.verifyPayment(reference);
+
+if (verified.status !== 'success') {
+  // mark FAILED (or keep PENDING), but DO NOT reserve
+  await this.prisma.reservationFeePayment.update({
+    where: { paystackReference: reference },
+    data: {
+      status: 'FAILED',
+      metadata: {
+        ...(payment.metadata as any),
+        verifyStatus: verified.status,
+      },
+    },
+  });
+
+  throw new BadRequestException(`Payment not successful: ${verified.status}`);
+}
+
+
     // 4. Double-check property is still available (in case it was reserved elsewhere)
     if (
       payment.property.isReserved &&
@@ -163,7 +182,8 @@ export class ReservationFeePaymentService {
       where: { paystackReference: reference },
       data: {
         status: 'SUCCESS',
-        paidAt: new Date(verified.paidAt),
+        paidAt: verified.paidAt ? new Date(verified.paidAt) : new Date(),
+
       },
     });
 

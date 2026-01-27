@@ -593,8 +593,9 @@ model Chat {
   userId                    String                @db.Uuid
   user                      User                  @relation("ChatUser", fields: [userId], references: [id], onDelete: Cascade)
   
-  agentId                   String                @db.Uuid
-  agent                     User                  @relation("ChatAgent", fields: [agentId], references: [id], onDelete: Cascade)
+  agentId                   String?               @db.Uuid
+  agent                     User?                 @relation("ChatAgent", fields: [agentId], references: [id], onDelete: SetNull)
+
   
   propertyId                String                @db.Uuid
   property                  Item                  @relation("ChatProperty", fields: [propertyId], references: [id], onDelete: Cascade)

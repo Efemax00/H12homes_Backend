@@ -2,12 +2,29 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import axios from 'axios';
 
+type PaystackTxnStatus = 'success' | 'failed' | 'abandoned';
+
+export interface PaystackInitializeResponse {
+  authorization_url: string;
+  access_code: string;
+  reference: string;
+}
+
+export interface PaystackVerifyResponse {
+  reference: string;
+  status: PaystackTxnStatus;
+  amount: number; // in naira
+  paidAt: string | null;
+  customer?: unknown;
+  metadata?: unknown;
+}
+
 @Injectable()
 export class PaystackService {
   private readonly secretKey = process.env.PAYSTACK_SECRET_KEY;
   private readonly baseUrl = 'https://api.paystack.co';
 
-  async verifyPayment(reference: string) {
+  async verifyPayment(reference: string): Promise<PaystackVerifyResponse> {
     try {
       const response = await axios.get(
         `${this.baseUrl}/transaction/verify/${reference}`,
@@ -18,40 +35,43 @@ export class PaystackService {
         },
       );
 
-      const { data } = response.data;
+      const { data } = response.data as { data: any };
 
-      if (data.status !== 'success') {
-        throw new BadRequestException('Payment verification failed');
-      }
+      const status = data.status as PaystackTxnStatus;
 
+      // ✅ IMPORTANT: do NOT throw for failed/abandoned
+      // only return status so caller decides what to do
       return {
         reference: data.reference,
-        amount: data.amount / 100, // Convert from kobo to naira
-        paidAt: data.paid_at,
+        amount: data.amount / 100, // kobo -> naira
+        paidAt: data.paid_at ?? null,
+        status: data.status,
         customer: data.customer,
         metadata: data.metadata,
       };
-    } catch (error) {
-      console.error('Paystack verification error:', error.response?.data || error.message);
+    } catch (error: any) {
+      console.error(
+        'Paystack verification error:',
+        error?.response?.data || error?.message,
+      );
       throw new BadRequestException('Payment verification failed');
     }
   }
 
-  // ✅ FIXED: Added metadata as 4th parameter
   async initializePayment(
     email: string,
-    amount: number,
+    amount: number, // naira
     reference: string,
-    metadata?: any, // ✅ Added this parameter
-  ) {
+    metadata?: Record<string, unknown>, // ✅ no any
+  ): Promise<PaystackInitializeResponse> {
     try {
       const response = await axios.post(
         `${this.baseUrl}/transaction/initialize`,
         {
           email,
-          amount: amount * 100, // Convert naira to kobo
+          amount: amount * 100, // naira -> kobo
           reference,
-          metadata, // ✅ Include metadata in request
+          metadata,
           callback_url: `${process.env.FRONTEND_URL}/payment/callback`,
         },
         {
@@ -62,9 +82,12 @@ export class PaystackService {
         },
       );
 
-      return response.data.data;
-    } catch (error) {
-      console.error('Paystack initialization error:', error.response?.data || error.message);
+      return response.data.data as PaystackInitializeResponse;
+    } catch (error: any) {
+      console.error(
+        'Paystack initialization error:',
+        error?.response?.data || error?.message,
+      );
       throw new BadRequestException('Payment initialization failed');
     }
   }

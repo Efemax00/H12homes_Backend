@@ -2,6 +2,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaystackService } from '../paystack/paystack.service';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class PaymentsService {
@@ -209,7 +210,8 @@ async initializeReservationFee(userId: string, propertyId: string) {
       where: { paystackReference: reference },
       data: {
         status: 'SUCCESS',
-        paidAt: new Date(verified.paidAt),
+        paidAt: verified.paidAt ? new Date(verified.paidAt) : new Date(),
+
       },
     });
 
@@ -241,11 +243,12 @@ async initializeReservationFee(userId: string, propertyId: string) {
   // OLD: async verifyViewingFee(reference: string)
 // NEW: async verifyReservationFee(reference: string)
 
+
 async verifyReservationFee(reference: string) {
-  // Verify with Paystack
+  // 1) Verify with Paystack (now returns status)
   const verified = await this.paystack.verifyPayment(reference);
 
-  // Find payment record
+  // 2) Find payment record
   const payment = await this.prisma.reservationFeePayment.findUnique({
     where: { paystackReference: reference },
     include: {
@@ -253,7 +256,8 @@ async verifyReservationFee(reference: string) {
         select: {
           id: true,
           title: true,
-          agentId: true,
+          isReserved: true,
+          currentReservationBy: true,
         },
       },
       user: {
@@ -271,6 +275,7 @@ async verifyReservationFee(reference: string) {
     throw new BadRequestException('Payment record not found');
   }
 
+  // 3) If already successful, return
   if (payment.status === 'SUCCESS') {
     return {
       success: true,
@@ -279,26 +284,74 @@ async verifyReservationFee(reference: string) {
     };
   }
 
-  // Update payment status
+  // 4) If paystack says NOT success → mark FAILED and stop
+  if (verified.status !== 'success') {
+    const oldMeta: Prisma.JsonObject =
+      payment.metadata && typeof payment.metadata === 'object' && !Array.isArray(payment.metadata)
+        ? (payment.metadata as Prisma.JsonObject)
+        : {};
+
+    await this.prisma.reservationFeePayment.update({
+      where: { paystackReference: reference },
+      data: {
+        status: 'FAILED',
+        paidAt: null,
+        metadata: {
+          ...oldMeta,
+          verifyStatus: verified.status,
+          verifiedAt: new Date().toISOString(),
+        },
+      },
+    });
+
+    throw new BadRequestException(`Payment not successful: ${verified.status}`);
+  }
+
+  // 5) Extra safety: property must not be reserved by another person
+  if (
+    payment.property.isReserved &&
+    payment.property.currentReservationBy &&
+    payment.property.currentReservationBy !== payment.userId
+  ) {
+    // payment succeeded but property got reserved elsewhere - handle as conflict
+    await this.prisma.reservationFeePayment.update({
+      where: { paystackReference: reference },
+      data: {
+        status: 'FAILED',
+        paidAt: verified.paidAt ? new Date(verified.paidAt) : null,
+        metadata: {
+          conflict: 'PROPERTY_RESERVED_BY_ANOTHER_USER',
+        },
+      },
+    });
+
+    throw new BadRequestException(
+      'Property was reserved by another user. Please contact support.',
+    );
+  }
+
+  // 6) Mark payment SUCCESS
   const updatedPayment = await this.prisma.reservationFeePayment.update({
     where: { paystackReference: reference },
     data: {
       status: 'SUCCESS',
-      paidAt: new Date(verified.paidAt),
+      paidAt: verified.paidAt ? new Date(verified.paidAt) : new Date(),
     },
   });
 
-  // Lock the property (reserve it)
+  // 7) Lock the property (reserve it)
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
   await this.prisma.item.update({
     where: { id: payment.propertyId },
     data: {
       isReserved: true,
       currentReservationBy: payment.userId,
       reservationStartedAt: new Date(),
-      reservationExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+      reservationExpiresAt: expiresAt,
       reservationFeeStatus: 'PAID',
       reservationFeePaidAt: new Date(),
-      status: 'PENDING', // Show PENDING to others
+      status: 'PENDING',
     },
   });
 
@@ -306,8 +359,10 @@ async verifyReservationFee(reference: string) {
     success: true,
     message: 'Property reserved successfully',
     payment: updatedPayment,
+    reservation: { expiresAt },
   };
 }
+
 
 // ADD THIS NEW METHOD:
 async hasUserActiveReservation(userId: string, propertyId: string): Promise<boolean> {
