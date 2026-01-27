@@ -10,13 +10,30 @@ export interface PaystackInitializeResponse {
   reference: string;
 }
 
+export type PaystackCustomer = Record<string, unknown>;
+export type PaystackMetadata = Record<string, unknown>;
+
 export interface PaystackVerifyResponse {
   reference: string;
   status: PaystackTxnStatus;
   amount: number; // in naira
   paidAt: string | null;
-  customer?: unknown;
-  metadata?: unknown;
+  customer: PaystackCustomer | null;
+  metadata: PaystackMetadata | null;
+}
+
+// ✅ Paystack raw API shape
+interface PaystackVerifyApiResponse {
+  status: boolean;
+  message: string;
+  data: {
+    reference: string;
+    status: string; // Paystack sends string, we narrow it
+    amount: number; // in kobo
+    paid_at?: string | null;
+    customer?: PaystackCustomer;
+    metadata?: PaystackMetadata;
+  };
 }
 
 @Injectable()
@@ -26,7 +43,7 @@ export class PaystackService {
 
   async verifyPayment(reference: string): Promise<PaystackVerifyResponse> {
     try {
-      const response = await axios.get(
+      const response = await axios.get<PaystackVerifyApiResponse>(
         `${this.baseUrl}/transaction/verify/${reference}`,
         {
           headers: {
@@ -35,25 +52,25 @@ export class PaystackService {
         },
       );
 
-      const { data } = response.data as { data: any };
+      const data = response.data.data;
 
-      const status = data.status as PaystackTxnStatus;
+      // Narrow status safely (default to 'failed' if unexpected)
+      const status: PaystackTxnStatus =
+        data.status === 'success' || data.status === 'failed' || data.status === 'abandoned'
+          ? data.status
+          : 'failed';
 
-      // ✅ IMPORTANT: do NOT throw for failed/abandoned
-      // only return status so caller decides what to do
       return {
         reference: data.reference,
         amount: data.amount / 100, // kobo -> naira
         paidAt: data.paid_at ?? null,
-        status: data.status,
-        customer: data.customer,
-        metadata: data.metadata,
+        status,
+        customer: data.customer ?? null,
+        metadata: data.metadata ?? null,
       };
-    } catch (error: any) {
-      console.error(
-        'Paystack verification error:',
-        error?.response?.data || error?.message,
-      );
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: unknown }; message?: string };
+      console.error('Paystack verification error:', err.response?.data || err.message);
       throw new BadRequestException('Payment verification failed');
     }
   }
@@ -62,7 +79,7 @@ export class PaystackService {
     email: string,
     amount: number, // naira
     reference: string,
-    metadata?: Record<string, unknown>, // ✅ no any
+    metadata?: Record<string, unknown>,
   ): Promise<PaystackInitializeResponse> {
     try {
       const response = await axios.post(
@@ -83,11 +100,9 @@ export class PaystackService {
       );
 
       return response.data.data as PaystackInitializeResponse;
-    } catch (error: any) {
-      console.error(
-        'Paystack initialization error:',
-        error?.response?.data || error?.message,
-      );
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: unknown }; message?: string };
+      console.error('Paystack initialization error:', err.response?.data || err.message);
       throw new BadRequestException('Payment initialization failed');
     }
   }

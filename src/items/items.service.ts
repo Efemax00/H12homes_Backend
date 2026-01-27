@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import { ItemStatus, Role, ItemCategory, ItemType, Prisma, Landlord } from '@prisma/client';
+import { ItemStatus, Role, ItemCategory, ItemType, Prisma, Landlord, PaymentStatus } from '@prisma/client';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { COMMISSION_CONFIG } from '../config/commission.config';
@@ -747,100 +747,152 @@ async getItemForEdit(id: string, adminId: string, role: Role) {
 async reserveProperty(propertyId: string, userId: string) {
   const item = await this.prisma.item.findUnique({
     where: { id: propertyId },
+    select: {
+      id: true,
+      status: true,
+      isReserved: true,
+      currentReservationBy: true,
+      reservationExpiresAt: true,
+    },
   });
 
-  if (!item) {
-    throw new NotFoundException('Property not found');
+  if (!item) throw new NotFoundException('Property not found');
+
+  // ✅ if reservation expired, release it first
+  const isExpired =
+    item.isReserved &&
+    item.reservationExpiresAt &&
+    new Date() > item.reservationExpiresAt;
+
+  if (isExpired) {
+    await this.prisma.item.update({
+      where: { id: propertyId },
+      data: {
+        isReserved: false,
+        currentReservationBy: null,
+        reservationStartedAt: null,
+        reservationExpiresAt: null,
+        status: ItemStatus.AVAILABLE,
+      },
+    });
   }
 
-  if (item.isReserved && item.currentReservationBy !== userId) {
+  // ✅ if still reserved by another person, block
+  const stillReservedByAnother =
+    item.isReserved &&
+    item.currentReservationBy &&
+    item.currentReservationBy !== userId &&
+    !isExpired;
+
+  if (stillReservedByAnother) {
     throw new BadRequestException('Property is already reserved by another user');
   }
 
-  // Check if property is AVAILABLE
-  if (item.status !== ItemStatus.AVAILABLE) {
+  // ✅ optional: if YOU want only AVAILABLE properties to be reservable,
+  // allow reserving user to proceed even if status is PENDING (because you set it)
+  if (item.status !== ItemStatus.AVAILABLE && item.currentReservationBy !== userId) {
     throw new BadRequestException('Property is not available for reservation');
   }
 
-  // Create reservation fee payment record
+  // ✅ create pending payment record (or do this after paystack initialize)
+  const paystackReference = `RSV-${Date.now()}-${userId.slice(0, 8)}`;
+
   const payment = await this.prisma.reservationFeePayment.create({
     data: {
       userId,
       propertyId,
-      amount: 10000, // ₦10,000
-      paystackReference: `RSV-${propertyId}-${userId}-${Date.now()}`,
-      status: 'PENDING',
+      amount: 10000,
+      paystackReference,
+      status: PaymentStatus.PENDING,
       h12KeepsAmount: 10000,
     },
   });
 
   return {
-    message: 'Reservation fee payment created',
-    payment,
-    nextStep: 'Complete payment via Paystack',
+    message: 'Reservation fee created. Proceed to payment.',
+    reference: paystackReference,
+    paymentId: payment.id,
   };
 }
+
 
 async getReservationStatus(propertyId: string, userId: string) {
-  const reservation = await this.prisma.reservationFeePayment.findFirst({
-    where: {
-      propertyId,
-      userId,
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
-  });
-
-  if (!reservation) {
-    return {
-      reserved: false,
-      message: 'No active reservation',
-    };
-  }
-
   const item = await this.prisma.item.findUnique({
     where: { id: propertyId },
+    select: {
+      isReserved: true,
+      currentReservationBy: true,
+      reservationExpiresAt: true,
+    },
   });
 
+  if (!item) throw new NotFoundException('Property not found');
+
+  const payment = await this.prisma.reservationFeePayment.findFirst({
+    where: { propertyId, userId },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (!payment) {
+    return { hasReservation: false, message: 'No reservation record' };
+  }
+
+  const now = new Date();
+  const expiresAt = item.reservationExpiresAt;
+
+  const isActive =
+    payment.status === PaymentStatus.SUCCESS &&
+    item.isReserved &&
+    item.currentReservationBy === userId &&
+    !!expiresAt &&
+    now < expiresAt;
+
+  const daysRemaining =
+    expiresAt ? Math.max(0, Math.ceil((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))) : 0;
+
   return {
-    reserved: item?.isReserved,
-    paymentStatus: reservation.status,
-    amount: reservation.amount,
-    paidAt: reservation.paidAt,
-    expiresAt: item?.reservationExpiresAt,
-    daysRemaining: item?.reservationExpiresAt
-      ? Math.ceil(
-          (item.reservationExpiresAt.getTime() - Date.now()) /
-            (1000 * 60 * 60 * 24),
-        )
-      : 0,
+    hasReservation: isActive,
+    reserved: item.isReserved,
+    reservedByMe: item.currentReservationBy === userId,
+    paymentStatus: payment.status,
+    amount: payment.amount,
+    paidAt: payment.paidAt,
+    expiresAt,
+    daysRemaining,
   };
 }
 
+
 async cancelReservation(propertyId: string, userId: string, reason?: string) {
-  const reservation = await this.prisma.reservationFeePayment.findFirst({
-    where: {
-      propertyId,
-      userId,
-      status: 'SUCCESS', // Only cancel paid reservations
+  const item = await this.prisma.item.findUnique({
+    where: { id: propertyId },
+    select: {
+      isReserved: true,
+      currentReservationBy: true,
+      reservationExpiresAt: true,
     },
   });
 
-  if (!reservation) {
-    throw new NotFoundException('No active paid reservation found');
+  if (!item) throw new NotFoundException('Property not found');
+
+  if (!item.isReserved || item.currentReservationBy !== userId) {
+    throw new BadRequestException('You do not own an active reservation for this property');
   }
 
-  // Check if within 7-day window
-  const item = await this.prisma.item.findUnique({
-    where: { id: propertyId },
-  });
-
-  if (!item || !item.reservationExpiresAt) {
+  // If expired, treat it as already over
+  if (!item.reservationExpiresAt || new Date() > item.reservationExpiresAt) {
     throw new BadRequestException('Reservation has expired');
   }
 
-  // Release the property
+  const payment = await this.prisma.reservationFeePayment.findFirst({
+    where: { propertyId, userId, status: PaymentStatus.SUCCESS },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (!payment) {
+    throw new NotFoundException('No paid reservation found');
+  }
+
   await this.prisma.item.update({
     where: { id: propertyId },
     data: {
@@ -854,10 +906,12 @@ async cancelReservation(propertyId: string, userId: string, reason?: string) {
 
   return {
     message: 'Reservation cancelled',
-    amount: reservation.amount,
+    amount: payment.amount,
     note: 'Reservation fee (₦10,000) is non-refundable',
+    reason: reason ?? 'User cancelled',
   };
 }
+
 
 // Handle Paystack webhook for reservation fee
 async handleReservationFeePayment(paystackRef: string, status: string) {
