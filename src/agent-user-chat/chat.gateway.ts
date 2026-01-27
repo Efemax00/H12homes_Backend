@@ -7,8 +7,23 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 
-@WebSocketGateway()
-export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+@WebSocketGateway({
+  cors: {
+    origin: [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'https://h12homes.web.app',
+      'https://h12homes.shop',
+      'https://admin.h12homes.web.app',
+      'https://h12homes.firebaseapp.com',
+      
+    ],
+    credentials: true,
+  },
+})
+export class ChatsGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
 
