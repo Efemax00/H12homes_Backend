@@ -219,6 +219,9 @@ export class ChatsService {
   async getUserChats(userId: string, status?: ChatStatus) {
     const whereClause = {
       userId,
+      propertyId: {
+      not: undefined,
+      },
       ...(status
         ? { status }
         : {

@@ -598,7 +598,7 @@ model Chat {
 
   
   propertyId                String                @db.Uuid
-  property                  Item                  @relation("ChatProperty", fields: [propertyId], references: [id], onDelete: Cascade)
+  property                  Item                  @relation("ChatProperty", fields: [propertyId], references: [id], onDelete: Cascade) 
   
   // Chat status
   status                    ChatStatus            @default(OPEN)
