@@ -10,6 +10,8 @@ import {
   HttpStatus,
   Query,
   ParseIntPipe,
+  ParseUUIDPipe,
+  DefaultValuePipe,
 } from '@nestjs/common';
 import { ChatsService } from './agent-user-chat.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -247,9 +249,9 @@ export class ChatsController {
    */
   @Get(':id/messages')
   async getChatMessages(
-    @Param('id') chatId: string,
-    @Query('limit') limit: number = 50,
-    @Query('offset') offset: number = 0,
+    @Param('chatId', new ParseUUIDPipe()) chatId: string,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
     @CurrentUser() user: { id: string },
   ) {
     try {
