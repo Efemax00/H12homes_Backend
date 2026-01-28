@@ -44,22 +44,6 @@ export class ChatsController {
   }
 
   /**
-   * GET /chats/:id
-   * Get chat details with messages and agent info
-   */
-  @Get(':id')
-  async getChatDetails(
-    @Param('id') chatId: string,
-    @CurrentUser() user: { id: string },
-  ) {
-    try {
-      return await this.chatsService.getChatDetails(chatId, user.id);
-    } catch (error) {
-      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-    }
-  }
-
-  /**
    * GET /chats/user/active
    * Get user's active chats
    */
@@ -69,7 +53,6 @@ export class ChatsController {
     @Query('status') status?: string,
   ) {
     try {
-      // Convert string status to ChatStatus enum if provided
       const chatStatus = status ? (status as ChatStatus) : undefined;
       return await this.chatsService.getUserChats(user.id, chatStatus);
     } catch (error) {
@@ -87,9 +70,91 @@ export class ChatsController {
     @Query('status') status?: string,
   ) {
     try {
-      // Convert string status to ChatStatus enum if provided
       const chatStatus = status ? (status as ChatStatus) : undefined;
       return await this.chatsService.getAgentChats(user.id, chatStatus);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  /**
+   * GET /chats/admin/all
+   * Admin: Get all chats
+   */
+  @Get('admin/all')
+  @Roles('ADMIN', 'SUPER_ADMIN')
+  @UseGuards(RolesGuard)
+  async getAllChats(
+    @Query('status') status?: string,
+    @Query('agentId') agentId?: string,
+    @Query('limit') limit: number = 20,
+    @Query('offset') offset: number = 0,
+  ) {
+    try {
+      const chatStatus = status ? (status as ChatStatus) : undefined;
+      return await this.chatsService.getAllChats(chatStatus, agentId, limit, offset);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  /**
+   * GET /chats/admin/pending-payment
+   * Admin: Get chats waiting for payment confirmation
+   */
+  @Get('admin/pending-payment')
+  @Roles('ADMIN', 'SUPER_ADMIN')
+  @UseGuards(RolesGuard)
+  async getPendingPaymentChats() {
+    try {
+      return await this.chatsService.getPendingPaymentChats();
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  /**
+   * GET /chats/admin/pending-rating
+   * Admin: Get chats waiting for rating request
+   */
+  @Get('admin/pending-rating')
+  @Roles('ADMIN', 'SUPER_ADMIN')
+  @UseGuards(RolesGuard)
+  async getChatsAwaitingRating() {
+    try {
+      return await this.chatsService.getChatsAwaitingRating();
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  /**
+   * GET /chats/property/:propertyId
+   * Get user's existing chat for a property
+   */
+  @Get('property/:propertyId')
+  async getChatByProperty(
+    @Param('propertyId') propertyId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    try {
+      return await this.chatsService.getChatByProperty(propertyId, user.id);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+    }
+  }
+
+  /**
+   * GET /chats/:id
+   * Get chat details with messages and agent info
+   */
+  @Get(':id')
+  async getChatDetails(
+    @Param('id') chatId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    try {
+      return await this.chatsService.getChatDetails(chatId, user.id);
     } catch (error) {
       throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
     }
@@ -124,7 +189,6 @@ export class ChatsController {
     @CurrentUser() user: { id: string },
   ) {
     try {
-      // Verify user is part of this chat
       const chat = await this.chatsService.getChatDetails(chatId, user.id);
       if (!chat) throw new HttpException('Unauthorized', HttpStatus.FORBIDDEN);
 
@@ -200,60 +264,6 @@ export class ChatsController {
   ) {
     try {
       return await this.chatsService.requestRating(chatId, user.id);
-    } catch (error) {
-      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-    }
-  }
-
-  // ==================== ADMIN ENDPOINTS ====================
-
-  /**
-   * GET /chats/admin/all
-   * Admin: Get all chats
-   */
-  @Get('admin/all')
-  @Roles('ADMIN', 'SUPER_ADMIN')
-  @UseGuards(RolesGuard)
-  async getAllChats(
-    @Query('status') status?: string,
-    @Query('agentId') agentId?: string,
-    @Query('limit') limit: number = 20,
-    @Query('offset') offset: number = 0,
-  ) {
-    try {
-      // Convert string status to ChatStatus enum if provided
-      const chatStatus = status ? (status as ChatStatus) : undefined;
-      return await this.chatsService.getAllChats(chatStatus, agentId, limit, offset);
-    } catch (error) {
-      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-    }
-  }
-
-  /**
-   * GET /chats/admin/pending-payment
-   * Admin: Get chats waiting for payment confirmation
-   */
-  @Get('admin/pending-payment')
-  @Roles('ADMIN', 'SUPER_ADMIN')
-  @UseGuards(RolesGuard)
-  async getPendingPaymentChats() {
-    try {
-      return await this.chatsService.getPendingPaymentChats();
-    } catch (error) {
-      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-    }
-  }
-
-  /**
-   * GET /chats/admin/pending-rating
-   * Admin: Get chats waiting for rating request
-   */
-  @Get('admin/pending-rating')
-  @Roles('ADMIN', 'SUPER_ADMIN')
-  @UseGuards(RolesGuard)
-  async getChatsAwaitingRating() {
-    try {
-      return await this.chatsService.getChatsAwaitingRating();
     } catch (error) {
       throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
     }

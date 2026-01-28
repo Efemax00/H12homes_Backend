@@ -252,6 +252,44 @@ export class ChatsService {
     });
   }
 
+  async getChatByProperty(propertyId: string, userId: string) {
+  const chat = await this.prisma.chat.findFirst({
+    where: {
+      propertyId,
+      userId,
+      status: {
+        in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[],
+      },
+    },
+    include: {
+      agent: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          avatarUrl: true,
+        },
+      },
+      property: {
+        select: {
+          id: true,
+          title: true,
+          price: true,
+          location: true,
+        },
+      },
+    },
+  });
+
+  if (!chat) {
+    throw new NotFoundException('Chat not found for this property');
+  }
+
+  return chat;
+}
+
   /**
    * Get agent's assigned chats
    */
