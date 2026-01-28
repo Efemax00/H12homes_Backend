@@ -44,6 +44,59 @@ export class ChatsController {
   }
 
   /**
+ * POST /chats/start
+ * Start or get chat for a property AND mark property as PENDING (soft lock).
+ * Body: { propertyId }
+ */
+@Post('start')
+async startChatAndMarkPending(
+  @Body() body: { propertyId: string },
+  @CurrentUser() user: { id: string },
+) {
+  try {
+    if (!body?.propertyId) {
+      throw new HttpException('propertyId is required', HttpStatus.BAD_REQUEST);
+    }
+    return await this.chatsService.startChatAndMarkPending(body.propertyId, user.id);
+  } catch (error) {
+    throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+  }
+}
+
+/**
+ * PATCH /chats/:id/pending/renew
+ * Renew pending hold (TTL) while user is active in chat.
+ */
+@Patch(':id/pending/renew')
+async renewPending(
+  @Param('id') chatId: string,
+  @CurrentUser() user: { id: string },
+) {
+  try {
+    return await this.chatsService.renewPending(chatId, user.id);
+  } catch (error) {
+    throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+  }
+}
+
+/**
+ * PATCH /chats/:id/pending/release
+ * Optional: release pending when user leaves chat (TTL-only is still fine).
+ */
+@Patch(':id/pending/release')
+async releasePending(
+  @Param('id') chatId: string,
+  @CurrentUser() user: { id: string },
+) {
+  try {
+    return await this.chatsService.releasePending(chatId, user.id);
+  } catch (error) {
+    throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+  }
+}
+
+
+  /**
    * GET /chats/user/active
    * Get user's active chats
    */
