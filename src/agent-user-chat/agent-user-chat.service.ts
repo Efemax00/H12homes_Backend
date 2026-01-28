@@ -11,7 +11,6 @@ import { MarkPaymentReceivedDto } from './dto/mark-payment-received.dto';
 import { RateAgentDto } from './dto/rate-agent.dto';
 import { ReportConversationDto } from './dto/report-conversation.dto';
 import { ChatStatus, ItemStatus, ReservationFeeStatus } from '@prisma/client';
-import { ChatService } from '../chat/chat.service';
 import { ItemsService } from '../items/items.service'; 
 
 
@@ -20,7 +19,6 @@ import { ItemsService } from '../items/items.service';
 export class ChatsService {
   constructor(
      private prisma: PrismaService,
-     private chatService: ChatService,
      private itemsService: ItemsService) {}
 
   /**

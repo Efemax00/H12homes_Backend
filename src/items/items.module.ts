@@ -9,5 +9,6 @@ import { CloudinaryModule } from '../cloudinary/cloudinary.module';
   imports: [PrismaModule, CloudinaryModule, JwtModule],
   controllers: [ItemsController],
   providers: [ItemsService],
+  exports: [ItemsService],
 })
 export class ItemsModule {}
