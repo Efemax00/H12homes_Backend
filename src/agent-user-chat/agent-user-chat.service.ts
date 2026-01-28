@@ -10,11 +10,18 @@ import { SendMessageDto } from './dto/send-message.dto';
 import { MarkPaymentReceivedDto } from './dto/mark-payment-received.dto';
 import { RateAgentDto } from './dto/rate-agent.dto';
 import { ReportConversationDto } from './dto/report-conversation.dto';
-import { ChatStatus } from '@prisma/client';
+import { ChatStatus, ItemStatus, ReservationFeeStatus } from '@prisma/client';
+import { ChatService } from '../chat/chat.service';
+import { ItemsService } from '../items/items.service'; 
+
+
 
 @Injectable()
 export class ChatsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+     private prisma: PrismaService,
+     private chatService: ChatService,
+     private itemsService: ItemsService) {}
 
   /**
    * Create chat when user pays ₦10,000 reservation fee
@@ -103,6 +110,7 @@ export class ChatsService {
             title: true,
             price: true,
             location: true,
+            category: true,
           },
         },
       },
@@ -147,175 +155,69 @@ export class ChatsService {
     }
 
     return {
-      ...chat,
+      chat,
       message: 'Chat created successfully. Agent will respond shortly.',
     };
   }
 
   async startChatAndMarkPending(propertyId: string, userId: string) {
-  const now = new Date();
-  const ttlMs = 15 * 60 * 1000; // 15 mins
-  const pendingUntil = new Date(now.getTime() + ttlMs);
-
-  return this.prisma.$transaction(async (tx) => {
-    // 1) Ensure property exists
-    const property = await tx.item.findUnique({
-      where: { id: propertyId },
-      include: { agent: true },
-    });
-
-    if (!property) throw new NotFoundException('Property not found');
-
-    // 2) Get existing active chat OR create a new VA chat (NOT the paid flow)
-    let chat = await tx.chat.findFirst({
-      where: {
-        userId,
-        propertyId,
-        status: { in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[] },
-      },
-      include: {
-        agent: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-            avatarUrl: true,
-          },
-        },
-        property: { select: { id: true, title: true, price: true, location: true } },
-      },
-    });
-
-    if (!chat) {
-      // Minimal chat create (VA default)
-      chat = await tx.chat.create({
-        data: {
-          userId,
-          propertyId,
-          status: 'OPEN' as ChatStatus,
-          chatType: 'VA', // if your schema has this field
-          agentFeePercentage: 10,
-          agentFeeAmount: (property.price * 10 * 0.7) / 100,
-          agentPaymentStatus: 'PENDING',
-        } as any,
-        include: {
-          agent: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-              avatarUrl: true,
-            },
-          },
-          property: { select: { id: true, title: true, price: true, location: true } },
-        },
-      });
-
-      // 3) VA initiates the conversation (only for new chat)
-      await tx.chatMessageModel.create({
-        data: {
-          chatId: chat.id,
-          senderId: userId,
-          message:
-            `Hi ${property.title ? '👋' : '👋'} I’m your Virtual Assistant.\n` +
-            `I can help with rent/sale terms, inspection, and availability.\n` +
-            `What would you like to know first?`,
-          messageType: 'SYSTEM',
-        },
-      });
-    }
-
-    // 4) Mark property as PENDING (soft lock)
-    // -----
-    // This requires your Item model to have:
-    // status, pendingByUserId, pendingChatId, pendingUntil
-    // -----
-    const isExpired =
-      (property as any).pendingUntil && new Date((property as any).pendingUntil).getTime() < now.getTime();
-
-    const ownedBySameUser =
-      (property as any).pendingByUserId === userId || (property as any).pendingChatId === chat.id;
-
-    const canTake =
-      (property as any).status === 'AVAILABLE' || isExpired || ownedBySameUser;
-
-    if (!canTake) {
-      throw new BadRequestException('Property is currently pending for another user');
-    }
-
-    const updatedProperty = await tx.item.update({
-      where: { id: propertyId },
-      data: {
-        status: 'PENDING', // ⚠️ ensure this matches your ItemStatus enum
-        pendingByUserId: userId,
-        pendingChatId: chat.id,
-        pendingUntil,
-      } as any,
-    });
-
-    return { chat, property: updatedProperty };
+  // 1) Get existing active chat first
+  let chat = await this.prisma.chat.findFirst({
+    where: {
+      userId,
+      propertyId,
+      status: { in: ["OPEN", "ACTIVE", "PAYMENT_RECEIVED"] as ChatStatus[] },
+    },
+    include: {
+      agent: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+      property: { select: { id: true, title: true, price: true, location: true, category: true } },
+    },
   });
+
+  // 2) If none, create VA chat
+  if (!chat) {
+    const created = await this.createChat({ propertyId, chatType: "VA" } as any, userId);
+    chat = created.chat; // ✅ now chat is assigned properly
+  }
+
+  // 3) Soft-hold property for 15 mins
+  const updatedProperty = await this.itemsService.softHoldForChat(propertyId, userId);
+
+  return { chat, property: updatedProperty };
 }
+
 
 async renewPending(chatId: string, userId: string) {
-  const ttlMs = 15 * 60 * 1000;
-  const pendingUntil = new Date(Date.now() + ttlMs);
-
-  const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
-  if (!chat) throw new NotFoundException('Chat not found');
-  if (chat.userId !== userId) throw new ForbiddenException('Not allowed');
-
-  const property = await this.prisma.item.findUnique({ where: { id: chat.propertyId } });
-  if (!property) throw new NotFoundException('Property not found');
-
-  // Only renew if this chat/user owns the lock (or it's expired)
-  const isExpired =
-    (property as any).pendingUntil && new Date((property as any).pendingUntil).getTime() < Date.now();
-
-  const owned =
-    (property as any).pendingChatId === chatId || (property as any).pendingByUserId === userId;
-
-  if (!owned && !isExpired) {
-    throw new BadRequestException('Property pending is owned by another user');
-  }
-
-  return this.prisma.item.update({
-    where: { id: chat.propertyId },
-    data: {
-      status: 'PENDING',
-      pendingByUserId: userId,
-      pendingChatId: chatId,
-      pendingUntil,
-    } as any,
+  const chat = await this.prisma.chat.findUnique({
+    where: { id: chatId },
+    select: { id: true, userId: true, propertyId: true, agentId: true },
   });
+
+  if (!chat) throw new NotFoundException("Chat not found");
+  if (chat.userId !== userId) throw new ForbiddenException("Not allowed");
+
+  // If it's agent chat, you can still renew the hold (up to you)
+  const updatedProperty = await this.itemsService.renewSoftHoldForChat(
+    chat.propertyId,
+    userId,
+  );
+
+  return { property: updatedProperty };
 }
+
 
 async releasePending(chatId: string, userId: string) {
-  const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
-  if (!chat) throw new NotFoundException('Chat not found');
-  if (chat.userId !== userId) throw new ForbiddenException('Not allowed');
-
-  const property = await this.prisma.item.findUnique({ where: { id: chat.propertyId } });
-  if (!property) throw new NotFoundException('Property not found');
-
-  if ((property as any).pendingChatId !== chatId) {
-    return { success: true, message: 'No pending lock owned by this chat' };
-  }
-
-  return this.prisma.item.update({
-    where: { id: chat.propertyId },
-    data: {
-      status: 'AVAILABLE',
-      pendingByUserId: null,
-      pendingChatId: null,
-      pendingUntil: null,
-    } as any,
+  const chat = await this.prisma.chat.findUnique({
+    where: { id: chatId },
+    select: { userId: true, propertyId: true },
   });
+
+  if (!chat) throw new NotFoundException("Chat not found");
+  if (chat.userId !== userId) throw new ForbiddenException("Not allowed");
+
+  return this.itemsService.releaseSoftHoldForChat(chat.propertyId, userId);
 }
+
   /**
    * Get chat details with agent info and messages
    */

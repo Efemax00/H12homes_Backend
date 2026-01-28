@@ -11,7 +11,8 @@ interface Message {
 export class ChatService {
   private groq: Groq;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService) {
     const apiKey = this.configService.get<string>('GROQ_API_KEY');
     this.groq = new Groq({ apiKey });
   }

@@ -9,6 +9,7 @@ import {
   HttpException,
   HttpStatus,
   Query,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { ChatsService } from './agent-user-chat.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -44,57 +45,58 @@ export class ChatsController {
   }
 
   /**
- * POST /chats/start
- * Start or get chat for a property AND mark property as PENDING (soft lock).
- * Body: { propertyId }
- */
-@Post('start')
-async startChatAndMarkPending(
-  @Body() body: { propertyId: string },
-  @CurrentUser() user: { id: string },
-) {
-  try {
-    if (!body?.propertyId) {
-      throw new HttpException('propertyId is required', HttpStatus.BAD_REQUEST);
+   * POST /chats/start
+   * Start or get chat for a property AND mark property as PENDING (soft lock).
+   * Body: { propertyId }
+   */
+  @Post('start')
+  async startChatAndMarkPending(
+    @Body() body: { propertyId: string },
+    @CurrentUser() user: { id: string },
+  ) {
+    try {
+      if (!body?.propertyId) {
+      }
+      return await this.chatsService.startChatAndMarkPending(
+        body.propertyId,
+        user.id,
+      );
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
     }
-    return await this.chatsService.startChatAndMarkPending(body.propertyId, user.id);
-  } catch (error) {
-    throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
   }
-}
 
-/**
- * PATCH /chats/:id/pending/renew
- * Renew pending hold (TTL) while user is active in chat.
- */
-@Patch(':id/pending/renew')
-async renewPending(
-  @Param('id') chatId: string,
-  @CurrentUser() user: { id: string },
-) {
-  try {
-    return await this.chatsService.renewPending(chatId, user.id);
-  } catch (error) {
-    throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+  /**
+   * PATCH /chats/:id/pending/renew
+   * Renew pending hold (TTL) while user is active in chat.
+   */
+  @Patch(':id/pending/renew')
+  async renewPending(
+    @Param('id') chatId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    try {
+      return await this.chatsService.renewPending(chatId, user.id);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
   }
-}
 
-/**
- * PATCH /chats/:id/pending/release
- * Optional: release pending when user leaves chat (TTL-only is still fine).
- */
-@Patch(':id/pending/release')
-async releasePending(
-  @Param('id') chatId: string,
-  @CurrentUser() user: { id: string },
-) {
-  try {
-    return await this.chatsService.releasePending(chatId, user.id);
-  } catch (error) {
-    throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+  /**
+   * PATCH /chats/:id/pending/release
+   * Optional: release pending when user leaves chat (TTL-only is still fine).
+   */
+  @Patch(':id/pending/release')
+  async releasePending(
+    @Param('id') chatId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    try {
+      return await this.chatsService.releasePending(chatId, user.id);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
   }
-}
-
 
   /**
    * GET /chats/user/active
@@ -140,12 +142,17 @@ async releasePending(
   async getAllChats(
     @Query('status') status?: string,
     @Query('agentId') agentId?: string,
-    @Query('limit') limit: number = 20,
-    @Query('offset') offset: number = 0,
+    @Query('limit', ParseIntPipe) limit = 20,
+    @Query('offset', ParseIntPipe) offset = 0,
   ) {
     try {
       const chatStatus = status ? (status as ChatStatus) : undefined;
-      return await this.chatsService.getAllChats(chatStatus, agentId, limit, offset);
+      return await this.chatsService.getAllChats(
+        chatStatus,
+        agentId,
+        limit,
+        offset,
+      );
     } catch (error) {
       throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
     }
@@ -224,7 +231,11 @@ async releasePending(
     @CurrentUser() user: { id: string },
   ) {
     try {
-      return await this.chatsService.sendMessage(chatId, user.id, sendMessageDto);
+      return await this.chatsService.sendMessage(
+        chatId,
+        user.id,
+        sendMessageDto,
+      );
     } catch (error) {
       throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
     }
@@ -264,7 +275,11 @@ async releasePending(
     @CurrentUser() user: { id: string },
   ) {
     try {
-      return await this.chatsService.markPaymentReceived(chatId, user.id, markPaymentDto);
+      return await this.chatsService.markPaymentReceived(
+        chatId,
+        user.id,
+        markPaymentDto,
+      );
     } catch (error) {
       throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
     }
@@ -298,7 +313,11 @@ async releasePending(
     @CurrentUser() user: { id: string },
   ) {
     try {
-      return await this.chatsService.reportConversation(chatId, user.id, reportDto);
+      return await this.chatsService.reportConversation(
+        chatId,
+        user.id,
+        reportDto,
+      );
     } catch (error) {
       throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
     }
