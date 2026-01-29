@@ -249,19 +249,15 @@ export class ChatsController {
    */
   @Get(':id/messages')
   async getChatMessages(
-    @Param('chatId', new ParseUUIDPipe()) chatId: string,
+    @Param('id', new ParseUUIDPipe()) chatId: string,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
     @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
     @CurrentUser() user: { id: string },
   ) {
-    try {
-      const chat = await this.chatsService.getChatDetails(chatId, user.id);
-      if (!chat) throw new HttpException('Unauthorized', HttpStatus.FORBIDDEN);
+    const chat = await this.chatsService.getChatDetails(chatId, user.id);
+    if (!chat) throw new HttpException('Unauthorized', HttpStatus.FORBIDDEN);
 
-      return await this.chatsService.getChatMessages(chatId, limit, offset);
-    } catch (error) {
-      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-    }
+    return this.chatsService.getChatMessages(chatId, limit, offset);
   }
 
   /**
