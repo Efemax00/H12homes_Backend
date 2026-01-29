@@ -14,7 +14,7 @@ import { ChatStatus, ItemStatus, ReservationFeeStatus } from '@prisma/client';
 import { ItemsService } from '../items/items.service';
 import { ChatService } from '../chat/chat.service';
 
-const AI_USER_ID = "00000000-0000-0000-0000-000000000001";
+const AI_USER_ID = '00000000-0000-0000-0000-000000000001';
 
 @Injectable()
 export class ChatsService {
@@ -566,6 +566,20 @@ Keep reply short, helpful, and Nigerian context.`
       console.log('✅ Groq returned:', groq?.message?.slice(0, 80));
 
       const aiText = groq?.message || "I'm here—how can I help?";
+
+      // ✅ DEBUG: ensure bot user exists in THIS database
+      const bot = await this.prisma.user.findUnique({
+        where: { id: AI_USER_ID },
+        select: { id: true, email: true },
+      });
+
+      console.log('🤖 BOT CHECK:', bot);
+
+      if (!bot) {
+        throw new Error(
+          `AI bot user not found in DB. Expected user id ${AI_USER_ID}. Run seed against same DATABASE_URL.`,
+        );
+      }
 
       const saved = await this.prisma.chatMessageModel.create({
         data: {
