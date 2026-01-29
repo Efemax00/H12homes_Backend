@@ -14,7 +14,7 @@ import { ChatStatus, ItemStatus, ReservationFeeStatus } from '@prisma/client';
 import { ItemsService } from '../items/items.service';
 import { ChatService } from '../chat/chat.service';
 
-const AI_USER_ID = 'H12_AI_BOT';
+const AI_USER_ID = "00000000-0000-0000-0000-000000000001";
 
 @Injectable()
 export class ChatsService {
