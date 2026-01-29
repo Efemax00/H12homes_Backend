@@ -15,6 +15,9 @@ const prisma = new PrismaClient({
 });
 
 async function main() {
+  // =========================
+  // SUPER ADMIN
+  // =========================
   const email = process.env.SUPER_ADMIN_EMAIL;
   const password = process.env.SUPER_ADMIN_PASSWORD;
 
@@ -38,6 +41,44 @@ async function main() {
   } else {
     console.log('SUPER_ADMIN already exists with email:', existing.email);
   }
+
+  // =========================
+  // AI BOT USER (REQUIRED FOR FK)
+  // =========================
+  const AI_USER_ID = '00000000-0000-0000-0000-000000000001';
+  const AI_EMAIL = 'bot@h12homes.ai';
+
+  // hash something (your User.password is required)
+  const botPasswordHash = await bcrypt.hash(
+    process.env.AI_BOT_PASSWORD || 'BOT_ACCOUNT_DO_NOT_LOGIN',
+    10,
+  );
+
+  await prisma.user.upsert({
+    where: { id: AI_USER_ID },
+    update: {
+      email: AI_EMAIL,
+      firstName: 'H12',
+      lastName: 'Assistant',
+      isEmailVerified: true,
+    },
+    create: {
+      id: AI_USER_ID,
+      email: AI_EMAIL,
+      password: botPasswordHash,
+      firstName: 'H12',
+      lastName: 'Assistant',
+      role: 'USER',
+      isEmailVerified: true,
+
+      // optional flags (your schema has these)
+      isAgent: false,
+      isInventor: false,
+      isFurnitureMaker: false,
+    },
+  });
+
+  console.log('✅ AI bot user ensured:', AI_USER_ID);
 }
 
 main()
