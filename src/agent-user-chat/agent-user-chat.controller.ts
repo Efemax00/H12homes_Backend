@@ -25,10 +25,14 @@ import { RateAgentDto } from './dto/rate-agent.dto';
 import { ReportConversationDto } from './dto/report-conversation.dto';
 import { ChatStatus } from '@prisma/client';
 
+
+
+
 @Controller('chats')
 @UseGuards(JwtAuthGuard)
 export class ChatsController {
-  constructor(private readonly chatsService: ChatsService) {}
+  constructor(
+    private readonly chatsService: ChatsService) {}
 
   /**
    * POST /chats/create
