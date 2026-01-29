@@ -497,6 +497,12 @@ enum VAChatStatus {
   ABANDONED               // User left without paying
 }
 
+enum VAStage {
+  POST_PAYMENT_INIT
+  POST_PAYMENT_SCHEDULED
+}
+
+
 model VAChatMessage {
   id                String @id @default(uuid()) @db.Uuid
   
@@ -621,6 +627,8 @@ model Chat {
   averageResponseTimeMinutes Int?                 // Time between user msg and agent response
   wasAgentResponsive        Boolean               @default(false) // True if responded within 24h
   agentMissedFirstResponse  Boolean               @default(false) // Didn't respond in 24h
+
+  vaStage VAStage @default(POST_PAYMENT_INIT)
   
   // Payment tracking
   paymentReceivedAt         DateTime?             // When admin marked payment received

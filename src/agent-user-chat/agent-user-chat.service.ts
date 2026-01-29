@@ -14,6 +14,10 @@ import { ReportConversationDto } from './dto/report-conversation.dto';
 import { ChatStatus, ItemStatus, ReservationFeeStatus } from '@prisma/client';
 import { ItemsService } from '../items/items.service';
 import { ChatService } from '../chat/chat.service';
+import { toWhatsAppLink } from '../utils/whatsapp.util';
+
+
+
 
 const AI_USER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -137,15 +141,44 @@ export class ChatsService {
     if (chatType === 'VA') {
       // Ensure bot user exists
       await this.ensureBotUserExists();
-      // VA chat - message from system
-      await this.prisma.chatMessageModel.create({
-        data: {
-          chatId: chat.id,
-          senderId: AI_USER_ID, // system message
-          message: `Hi! 👋 I'm your Virtual Assistant. I'm here to help you with this property. How can I assist you today?`,
-          messageType: 'SYSTEM',
-        },
-      });
+
+const agent = property.agentId
+  ? await this.prisma.user.findUnique({
+      where: { id: property.agentId },
+      select: { id: true, firstName: true, lastName: true, phone: true },
+    })
+  : null;
+
+const waLink = agent?.phone ? toWhatsAppLink(agent.phone)
+ : null;
+
+await this.prisma.chatMessageModel.create({
+  data: {
+    chatId: chat.id,
+    senderId: AI_USER_ID,
+    messageType: "SYSTEM",
+    message: [
+      `✅ Reservation confirmed for **${property.title}**.`,
+      `Important: All payments must go to **H12homes company account only**. Do **not** pay landlord/agent directly.`,
+      ``,
+      `👤 Assigned Agent: ${agent ? `${agent.firstName} ${agent.lastName}` : "Pending assignment"}`,
+      `📞 WhatsApp: ${waLink ?? "Pending agent contact"}`,
+      ``,
+      `Reply: **INSPECT TODAY** / **INSPECT TOMORROW** / **PICK DATE**`,
+    ].join("\n"),
+    metadata: {
+      agentId: agent?.id ?? null,
+      waLink,
+      mode: "POST_PAYMENT",
+    },
+  },
+});
+
+await this.prisma.chat.update({
+  where: { id: chat.id },
+  data: { vaStage: "POST_PAYMENT_INIT" },
+});
+
     } else {
       // Agent chat - message from agent
       await this.prisma.chatMessageModel.create({
@@ -210,6 +243,100 @@ export class ChatsService {
 
     return { chat, property: updatedProperty };
   }
+
+  private async handlePostPaymentVa(chatId: string, userId: string, text: string) {
+  await this.ensureBotUserExists();
+
+  const chat = await this.prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      property: { select: { id: true, title: true, agentId: true } },
+    },
+  });
+
+  if (!chat) return;
+
+  const msg = text.trim().toLowerCase();
+
+  // ESCALATE always works
+  if (msg.includes("escalate")) {
+    await this.prisma.chatMessageModel.create({
+      data: {
+        chatId,
+        senderId: AI_USER_ID,
+        messageType: "ADMIN_NOTIFICATION",
+        message: `⚠️ User requested ESCALATION for chat ${chatId}. Please follow up immediately.`,
+        metadata: { chatId, userId, reason: "ESCALATE" },
+      },
+    });
+
+    await this.prisma.chatMessageModel.create({
+      data: {
+        chatId,
+        senderId: AI_USER_ID,
+        messageType: "SYSTEM",
+        message: `✅ Escalated to admin. You’ll be contacted shortly.`,
+      },
+    });
+
+    return;
+  }
+
+  // Only handle scheduling in INIT stage
+  if (chat.vaStage !== "POST_PAYMENT_INIT") {
+    // keep it strict
+    await this.prisma.chatMessageModel.create({
+      data: {
+        chatId,
+        senderId: AI_USER_ID,
+        messageType: "SYSTEM",
+        message: `Reply **ESCALATE** if the agent is not responding, or **RESEND AGENT** to see the agent details again.`,
+      },
+    });
+    return;
+  }
+
+  // parse inspection intent
+  let chosen = "";
+
+  if (msg.includes("today")) chosen = "TODAY";
+  else if (msg.includes("tomorrow")) chosen = "TOMORROW";
+  else if (msg.includes("pick date") || msg.includes("date")) chosen = "PICK_DATE";
+
+  if (!chosen) {
+    await this.prisma.chatMessageModel.create({
+      data: {
+        chatId,
+        senderId: AI_USER_ID,
+        messageType: "SYSTEM",
+        message: `Reply: **INSPECT TODAY** / **INSPECT TOMORROW** / **PICK DATE**`,
+      },
+    });
+    return;
+  }
+
+  await this.prisma.chatMessageModel.create({
+    data: {
+      chatId,
+      senderId: AI_USER_ID,
+      messageType: "SYSTEM",
+      message:
+        chosen === "PICK_DATE"
+          ? `✅ Noted. Reply with your preferred inspection date and time (e.g., “Feb 2, 3pm”).`
+          : `✅ Noted. I’ve sent your inspection request (**${chosen}**) to the assigned agent. If they don’t respond within 30 minutes, reply **ESCALATE**.`,
+      metadata: { inspectionChoice: chosen },
+    },
+  });
+
+  // If TODAY/TOMORROW, mark scheduled stage immediately
+  if (chosen !== "PICK_DATE") {
+    await this.prisma.chat.update({
+      where: { id: chatId },
+      data: { vaStage: "POST_PAYMENT_SCHEDULED" },
+    });
+  }
+}
+
 
   async renewPending(chatId: string, userId: string) {
     const chat = await this.prisma.chat.findUnique({
@@ -470,10 +597,17 @@ export class ChatsService {
     const isVAChat = !chat.agentId;
 
     if (isVAChat) {
-      this.generateVaReply(chatId, message).catch((e) => {
-        console.error('Groq VA reply failed:', e?.message || e);
-      });
-    }
+  const freshChat = await this.prisma.chat.findUnique({
+    where: { id: chatId },
+    select: { vaStage: true },
+  });
+
+  if (freshChat?.vaStage === "POST_PAYMENT_INIT" || freshChat?.vaStage === "POST_PAYMENT_SCHEDULED") {
+    await this.handlePostPaymentVa(chatId, userId, message);
+  }
+}
+
+
 
     // Update chat stats
     const isAgent = chat.agentId === userId;
