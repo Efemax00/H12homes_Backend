@@ -14,9 +14,7 @@ import { ChatStatus, ItemStatus, ReservationFeeStatus } from '@prisma/client';
 import { ItemsService } from '../items/items.service';
 import { ChatService } from '../chat/chat.service';
 
-
 const AI_USER_ID = 'H12_AI_BOT';
-
 
 @Injectable()
 export class ChatsService {
@@ -531,43 +529,60 @@ export class ChatsService {
   }
 
   private async generateVaReply(chatId: string, userText: string) {
-    // Get property details for context (optional but very useful)
-    const chat = await this.prisma.chat.findUnique({
-      where: { id: chatId },
-      include: {
-        property: {
-          select: { title: true, price: true, location: true, category: true },
-        },
-      },
-    });
+    try {
+      console.log('🤖 generateVaReply START', { chatId });
 
-    const context = chat?.property
-      ? `Property context:
+      const chat = await this.prisma.chat.findUnique({
+        where: { id: chatId },
+        include: {
+          property: {
+            select: {
+              title: true,
+              price: true,
+              location: true,
+              category: true,
+            },
+          },
+        },
+      });
+
+      const context = chat?.property
+        ? `Property context:
 Title: ${chat.property.title}
 Price: ₦${chat.property.price}
 Location: ${chat.property.location}
 Category: ${chat.property.category}
 
 Keep reply short, helpful, and Nigerian context.`
-      : undefined;
+        : undefined;
 
-    // Call your existing Groq ChatService
-    const groq = await this.chatService.sendMessage([
-      ...(context ? [{ role: 'system', content: context }] : []),
-      { role: 'user', content: userText },
-    ]);
+      console.log('🤖 calling Groq...', { hasContext: !!context });
 
-    const aiText = groq?.message || "I'm here—how can I help?";
+      const groq = await this.chatService.sendMessage([
+        ...(context ? [{ role: 'system', content: context }] : []),
+        { role: 'user', content: userText },
+      ]);
 
-    // Save AI response
-    await this.prisma.chatMessageModel.create({
-      data: {
-        chatId,
-        senderId: AI_USER_ID,
-        message: aiText,
-        messageType: 'SYSTEM',
-      },
-    });
+      console.log('✅ Groq returned:', groq?.message?.slice(0, 80));
+
+      const aiText = groq?.message || "I'm here—how can I help?";
+
+      const saved = await this.prisma.chatMessageModel.create({
+        data: {
+          chatId,
+          senderId: AI_USER_ID,
+          message: aiText,
+          messageType: 'SYSTEM',
+        },
+      });
+
+      console.log('✅ AI message SAVED', {
+        id: saved.id,
+        senderId: saved.senderId,
+      });
+    } catch (e: any) {
+      console.error('❌ generateVaReply FAILED:', e?.message || e);
+    }
   }
 
   /**
