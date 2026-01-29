@@ -11,15 +11,20 @@ import { MarkPaymentReceivedDto } from './dto/mark-payment-received.dto';
 import { RateAgentDto } from './dto/rate-agent.dto';
 import { ReportConversationDto } from './dto/report-conversation.dto';
 import { ChatStatus, ItemStatus, ReservationFeeStatus } from '@prisma/client';
-import { ItemsService } from '../items/items.service'; 
+import { ItemsService } from '../items/items.service';
+import { ChatService } from '../chat/chat.service';
 
+
+const AI_USER_ID = 'H12_AI_BOT';
 
 
 @Injectable()
 export class ChatsService {
   constructor(
-     private prisma: PrismaService,
-     private itemsService: ItemsService) {}
+    private prisma: PrismaService,
+    private itemsService: ItemsService,
+    private chatService: ChatService,
+  ) {}
 
   /**
    * Create chat when user pays ₦10,000 reservation fee
@@ -135,7 +140,7 @@ export class ChatsService {
       await this.prisma.chatMessageModel.create({
         data: {
           chatId: chat.id,
-          senderId: userId,
+          senderId: AI_USER_ID, // system message
           message: `Hi! 👋 I'm your Virtual Assistant. I'm here to help you with this property. How can I assist you today?`,
           messageType: 'SYSTEM',
         },
@@ -159,62 +164,81 @@ export class ChatsService {
   }
 
   async startChatAndMarkPending(propertyId: string, userId: string) {
-  // 1) Get existing active chat first
-  let chat = await this.prisma.chat.findFirst({
-    where: {
-      userId,
-      propertyId,
-      status: { in: ["OPEN", "ACTIVE", "PAYMENT_RECEIVED"] as ChatStatus[] },
-    },
-    include: {
-      agent: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-      property: { select: { id: true, title: true, price: true, location: true, category: true } },
-    },
-  });
+    // 1) Get existing active chat first
+    let chat = await this.prisma.chat.findFirst({
+      where: {
+        userId,
+        propertyId,
+        status: { in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[] },
+      },
+      include: {
+        agent: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+          },
+        },
+        property: {
+          select: {
+            id: true,
+            title: true,
+            price: true,
+            location: true,
+            category: true,
+          },
+        },
+      },
+    });
 
-  // 2) If none, create VA chat
-  if (!chat) {
-    const created = await this.createChat({ propertyId, chatType: "VA" } as any, userId);
-    chat = created.chat; // ✅ now chat is assigned properly
+    // 2) If none, create VA chat
+    if (!chat) {
+      const created = await this.createChat(
+        { propertyId, chatType: 'VA' } as any,
+        userId,
+      );
+      chat = created.chat; // ✅ now chat is assigned properly
+    }
+
+    // 3) Soft-hold property for 15 mins
+    const updatedProperty = await this.itemsService.softHoldForChat(
+      propertyId,
+      userId,
+    );
+
+    return { chat, property: updatedProperty };
   }
 
-  // 3) Soft-hold property for 15 mins
-  const updatedProperty = await this.itemsService.softHoldForChat(propertyId, userId);
+  async renewPending(chatId: string, userId: string) {
+    const chat = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      select: { id: true, userId: true, propertyId: true, agentId: true },
+    });
 
-  return { chat, property: updatedProperty };
-}
+    if (!chat) throw new NotFoundException('Chat not found');
+    if (chat.userId !== userId) throw new ForbiddenException('Not allowed');
 
+    // If it's agent chat, you can still renew the hold (up to you)
+    const updatedProperty = await this.itemsService.renewSoftHoldForChat(
+      chat.propertyId,
+      userId,
+    );
 
-async renewPending(chatId: string, userId: string) {
-  const chat = await this.prisma.chat.findUnique({
-    where: { id: chatId },
-    select: { id: true, userId: true, propertyId: true, agentId: true },
-  });
+    return { property: updatedProperty };
+  }
 
-  if (!chat) throw new NotFoundException("Chat not found");
-  if (chat.userId !== userId) throw new ForbiddenException("Not allowed");
+  async releasePending(chatId: string, userId: string) {
+    const chat = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      select: { userId: true, propertyId: true },
+    });
 
-  // If it's agent chat, you can still renew the hold (up to you)
-  const updatedProperty = await this.itemsService.renewSoftHoldForChat(
-    chat.propertyId,
-    userId,
-  );
+    if (!chat) throw new NotFoundException('Chat not found');
+    if (chat.userId !== userId) throw new ForbiddenException('Not allowed');
 
-  return { property: updatedProperty };
-}
-
-
-async releasePending(chatId: string, userId: string) {
-  const chat = await this.prisma.chat.findUnique({
-    where: { id: chatId },
-    select: { userId: true, propertyId: true },
-  });
-
-  if (!chat) throw new NotFoundException("Chat not found");
-  if (chat.userId !== userId) throw new ForbiddenException("Not allowed");
-
-  return this.itemsService.releaseSoftHoldForChat(chat.propertyId, userId);
-}
+    return this.itemsService.releaseSoftHoldForChat(chat.propertyId, userId);
+  }
 
   /**
    * Get chat details with agent info and messages
@@ -284,7 +308,7 @@ async releasePending(chatId: string, userId: string) {
     const whereClause = {
       userId,
       propertyId: {
-      not: undefined,
+        not: undefined,
       },
       ...(status
         ? { status }
@@ -317,42 +341,42 @@ async releasePending(chatId: string, userId: string) {
   }
 
   async getChatByProperty(propertyId: string, userId: string) {
-  const chat = await this.prisma.chat.findFirst({
-    where: {
-      propertyId,
-      userId,
-      status: {
-        in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[],
-      },
-    },
-    include: {
-      agent: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          email: true,
-          phone: true,
-          avatarUrl: true,
+    const chat = await this.prisma.chat.findFirst({
+      where: {
+        propertyId,
+        userId,
+        status: {
+          in: ['OPEN', 'ACTIVE', 'PAYMENT_RECEIVED'] as ChatStatus[],
         },
       },
-      property: {
-        select: {
-          id: true,
-          title: true,
-          price: true,
-          location: true,
+      include: {
+        agent: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            avatarUrl: true,
+          },
+        },
+        property: {
+          select: {
+            id: true,
+            title: true,
+            price: true,
+            location: true,
+          },
         },
       },
-    },
-  });
+    });
 
-  if (!chat) {
-    throw new NotFoundException('Chat not found for this property');
+    if (!chat) {
+      throw new NotFoundException('Chat not found for this property');
+    }
+
+    return chat;
   }
-
-  return chat;
-}
 
   /**
    * Get agent's assigned chats
@@ -441,6 +465,15 @@ async releasePending(chatId: string, userId: string) {
       },
     });
 
+    // ✅ Auto-reply only for VA chats (agentId is null)
+    const isVAChat = !chat.agentId;
+
+    if (isVAChat) {
+      this.generateVaReply(chatId, message).catch((e) => {
+        console.error('Groq VA reply failed:', e?.message || e);
+      });
+    }
+
     // Update chat stats
     const isAgent = chat.agentId === userId;
     if (isAgent) {
@@ -495,6 +528,46 @@ async releasePending(chatId: string, userId: string) {
     }
 
     return newMessage;
+  }
+
+  private async generateVaReply(chatId: string, userText: string) {
+    // Get property details for context (optional but very useful)
+    const chat = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      include: {
+        property: {
+          select: { title: true, price: true, location: true, category: true },
+        },
+      },
+    });
+
+    const context = chat?.property
+      ? `Property context:
+Title: ${chat.property.title}
+Price: ₦${chat.property.price}
+Location: ${chat.property.location}
+Category: ${chat.property.category}
+
+Keep reply short, helpful, and Nigerian context.`
+      : undefined;
+
+    // Call your existing Groq ChatService
+    const groq = await this.chatService.sendMessage([
+      ...(context ? [{ role: 'system', content: context }] : []),
+      { role: 'user', content: userText },
+    ]);
+
+    const aiText = groq?.message || "I'm here—how can I help?";
+
+    // Save AI response
+    await this.prisma.chatMessageModel.create({
+      data: {
+        chatId,
+        senderId: AI_USER_ID,
+        message: aiText,
+        messageType: 'SYSTEM',
+      },
+    });
   }
 
   /**
