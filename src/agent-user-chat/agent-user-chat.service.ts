@@ -5,6 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import * as bcrypt from 'bcrypt';
 import { CreateChatDto } from './dto/create-chat.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { MarkPaymentReceivedDto } from './dto/mark-payment-received.dto';
@@ -134,6 +135,8 @@ export class ChatsService {
 
     // Send system message based on chat type
     if (chatType === 'VA') {
+      // Ensure bot user exists
+      await this.ensureBotUserExists();
       // VA chat - message from system
       await this.prisma.chatMessageModel.create({
         data: {
@@ -528,6 +531,41 @@ export class ChatsService {
     return newMessage;
   }
 
+  private async ensureBotUserExists() {
+  const botId = AI_USER_ID;
+
+  const existing = await this.prisma.user.findUnique({
+    where: { id: botId },
+    select: { id: true },
+  });
+
+  if (existing) return;
+
+  const passwordHash = await bcrypt.hash(
+    process.env.AI_BOT_PASSWORD || 'BOT_ACCOUNT_DO_NOT_LOGIN',
+    10,
+  );
+
+  await this.prisma.user.create({
+    data: {
+      id: botId,
+      email: 'bot@h12homes.ai',
+      password: passwordHash,
+      firstName: 'H12',
+      lastName: 'Assistant',
+      role: 'USER',
+      isEmailVerified: true,
+      isAgent: false,
+      isInventor: false,
+      isFurnitureMaker: false,
+    },
+  });
+
+  console.log('✅ AI bot user created in DB:', botId);
+}
+
+
+
   private async generateVaReply(chatId: string, userText: string) {
     try {
       console.log('🤖 generateVaReply START', { chatId });
@@ -566,21 +604,7 @@ Keep reply short, helpful, and Nigerian context.`
       console.log('✅ Groq returned:', groq?.message?.slice(0, 80));
 
       const aiText = groq?.message || "I'm here—how can I help?";
-
-      // ✅ DEBUG: ensure bot user exists in THIS database
-      const bot = await this.prisma.user.findUnique({
-        where: { id: AI_USER_ID },
-        select: { id: true, email: true },
-      });
-
-      console.log('🤖 BOT CHECK:', bot);
-
-      if (!bot) {
-        throw new Error(
-          `AI bot user not found in DB. Expected user id ${AI_USER_ID}. Run seed against same DATABASE_URL.`,
-        );
-      }
-
+      await this.ensureBotUserExists();
       const saved = await this.prisma.chatMessageModel.create({
         data: {
           chatId,
@@ -595,7 +619,7 @@ Keep reply short, helpful, and Nigerian context.`
         senderId: saved.senderId,
       });
     } catch (e: any) {
-      console.error('❌ generateVaReply FAILED:', e?.message || e);
+      console.error('❌ generateVaReply FAILED:, e?.message || e');
     }
   }
 
