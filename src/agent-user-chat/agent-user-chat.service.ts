@@ -11,11 +11,16 @@ import { SendMessageDto } from './dto/send-message.dto';
 import { MarkPaymentReceivedDto } from './dto/mark-payment-received.dto';
 import { RateAgentDto } from './dto/rate-agent.dto';
 import { ReportConversationDto } from './dto/report-conversation.dto';
-import { ChatStatus, ItemStatus, ReservationFeeStatus } from '@prisma/client';
+import {
+  ChatStatus,
+  ItemStatus,
+  Role,
+  ReservationFeeStatus,
+  AgentPaymentStatus,
+} from '@prisma/client';
 import { ItemsService } from '../items/items.service';
 import { ChatService } from '../chat/chat.service';
 import { toWhatsAppLink } from '../utils/whatsapp.util';
-
 
 interface AIMessage {
   role: 'user' | 'assistant' | 'system';
@@ -27,14 +32,14 @@ const AI_USER_ID = '00000000-0000-0000-0000-000000000001';
 // AI Agent Configuration
 const AI_UNLOCK_KEYWORDS = [
   "i'm ready to meet my agent",
-  "connect me to agent",
-  "talk to the agent",
-  "ready for agent",
-  "agent please",
+  'connect me to agent',
+  'talk to the agent',
+  'ready for agent',
+  'agent please',
   "i'm ready for agent",
-  "connect to agent",
-  "ready to meet agent",
-  "transfer to agent",
+  'connect to agent',
+  'ready to meet agent',
+  'transfer to agent',
 ];
 
 const AI_GREETING_RESPONSES = {
@@ -61,6 +66,7 @@ To connect with them, simply reply with: **"I'm ready to meet my agent"**
 
 (Or just type something like "connect me to agent" - I'll understand!)`,
 };
+
 
 @Injectable()
 export class ChatsService {
@@ -104,18 +110,13 @@ export class ChatsService {
       );
     }
 
-    // Determine chat type: VA or direct agent
-    const chatType = createChatDto.chatType || 'VA'; // Default to VA
-
-    let agentId: string | null = null;
-
-    // If direct agent chat, use property's agent
-    if (chatType === 'AGENT') {
-      if (!property.agentId) {
-        throw new BadRequestException('This property has no agent assigned');
-      }
-      agentId = property.agentId;
+    // Every property must have an admin/agent
+    if (!property.agentId) {
+      throw new BadRequestException('Property has no assigned admin');
     }
+
+    const agentId = property.agentId;
+
     // If VA chat (default), agentId stays null
 
     // Calculate agent fee (10% of property price)
@@ -124,19 +125,15 @@ export class ChatsService {
     const agentFeeAmount = (agentFeeTotal * 70) / 100; // Agent gets 70%
 
     // Create chat - FIX: Use proper conditional for optional agentId
-    const chatData: any = {
+    const chatData = {
       userId,
       propertyId,
+      agentId, // 🔥 ALWAYS SET
       status: 'OPEN' as ChatStatus,
       agentFeePercentage,
       agentFeeAmount,
-      agentPaymentStatus: 'PENDING',
+      agentPaymentStatus: AgentPaymentStatus.PENDING,
     };
-
-    // Only add agentId if it's not null
-    if (agentId) {
-      chatData.agentId = agentId;
-    }
 
     const chat = await this.prisma.chat.create({
       data: chatData,
@@ -179,58 +176,37 @@ export class ChatsService {
     }
 
     // Send system message based on chat type
-    if (chatType === 'VA') {
-      // Ensure bot user exists
-      await this.ensureBotUserExists();
+    // Always start with AI system message
+    await this.ensureBotUserExists();
 
-const agent = property.agentId
-  ? await this.prisma.user.findUnique({
-      where: { id: property.agentId },
-      select: { id: true, firstName: true, lastName: true, phone: true },
-    })
-  : null;
+    const agent = await this.prisma.user.findUnique({
+      where: { id: agentId },
+      select: { firstName: true, lastName: true, phone: true },
+    });
 
-const waLink = agent?.phone ? toWhatsAppLink(agent.phone)
- : null;
+    if (!agent) throw new BadRequestException('Assigned agent not found');
 
-await this.prisma.chatMessage.create({
-  data: {
-    chatId: chat.id,
-    senderId: AI_USER_ID,
-    messageType: "SYSTEM",
-    message: [
-      `✅ Reservation confirmed for **${property.title}**.`,
-      `Important: All payments must go to **H12homes company account only**. Do **not** pay landlord/agent directly.`,
-      ``,
-      `👤 Assigned Agent: ${agent ? `${agent.firstName} ${agent.lastName}` : "Pending assignment"}`,
-      `📞 WhatsApp: ${waLink ?? "Pending agent contact"}`,
-      ``,
-      `Reply: **INSPECT TODAY** / **INSPECT TOMORROW** / **PICK DATE**`,
-    ].join("\n"),
-    metadata: {
-      agentId: agent?.id ?? null,
-      waLink,
-      mode: "POST_PAYMENT",
-    },
-  },
-});
+    const waLink = agent?.phone ? toWhatsAppLink(agent.phone) : null;
 
-await this.prisma.chat.update({
-  where: { id: chat.id },
-  data: { vaStage: "POST_PAYMENT_INIT" },
-});
+    await this.prisma.chatMessage.create({
+      data: {
+        chatId: chat.id,
+        senderId: AI_USER_ID,
+        messageType: 'SYSTEM',
+        message: [
+          `✅ Reservation confirmed for **${property.title}**.`,
+          `👤 Assigned Agent: ${agent.firstName} ${agent.lastName}`,
+          `📞 WhatsApp: ${waLink ?? 'N/A'}`,
+          ``,
+          `Reply: **INSPECT TODAY** / **INSPECT TOMORROW** / **PICK DATE**`,
+        ].join('\n'),
+      },
+    });
 
-    } else {
-      // Agent chat - message from agent
-      await this.prisma.chatMessage.create({
-        data: {
-          chatId: chat.id,
-          senderId: agentId!, // agentId is guaranteed to exist in AGENT chat type
-          message: `Welcome! I'm your H12homes agent. I'm here to help you complete this transaction. Property: ${property.title}`,
-          messageType: 'SYSTEM',
-        },
-      });
-    }
+    await this.prisma.chat.update({
+      where: { id: chat.id },
+      data: { vaStage: 'POST_PAYMENT_INIT' },
+    });
 
     return {
       chat,
@@ -269,11 +245,30 @@ await this.prisma.chat.update({
 
     // 2) If none, create VA chat
     if (!chat) {
-      const created = await this.createChat(
-        { propertyId, chatType: 'VA' } as any,
-        userId,
-      );
-      chat = created.chat; // ✅ now chat is assigned properly
+      const created = await this.createChat({ propertyId } as any, userId);
+      chat = await this.prisma.chat.findUnique({
+        where: { id: created.chat.id },
+        include: {
+          agent: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              avatarUrl: true,
+            },
+          },
+          property: {
+            select: {
+              id: true,
+              title: true,
+              price: true,
+              location: true,
+              category: true,
+            },
+          },
+        },
+      });
+      // ✅ now chat is assigned properly
     }
 
     // 3) Soft-hold property for 15 mins
@@ -285,254 +280,264 @@ await this.prisma.chat.update({
     return { chat, property: updatedProperty };
   }
 
-  private async handlePostPaymentVa(chatId: string, userId: string, text: string) {
-  await this.ensureBotUserExists();
-
-  const chat = await this.prisma.chat.findUnique({
-    where: { id: chatId },
-    include: {
-      property: { select: { id: true, title: true, agentId: true } },
-    },
-  });
-
-  if (!chat) return;
-
-  const msg = text.trim().toLowerCase();
-
-  // ESCALATE always works
-  if (msg.includes("escalate")) {
-    await this.prisma.chatMessage.create({
-      data: {
-        chatId,
-        senderId: AI_USER_ID,
-        messageType: "ADMIN_NOTIFICATION",
-        message: `⚠️ User requested ESCALATION for chat ${chatId}. Please follow up immediately.`,
-        metadata: { chatId, userId, reason: "ESCALATE" },
-      },
-    });
-
-    await this.prisma.chatMessage.create({
-      data: {
-        chatId,
-        senderId: AI_USER_ID,
-        messageType: "SYSTEM",
-        message: `✅ Escalated to admin. You’ll be contacted shortly.`,
-      },
-    });
-
-    return;
-  }
-
-  // Only handle scheduling in INIT stage
-  if (chat.vaStage !== "POST_PAYMENT_INIT") {
-    // keep it strict
-    await this.prisma.chatMessage.create({
-      data: {
-        chatId,
-        senderId: AI_USER_ID,
-        messageType: "SYSTEM",
-        message: `Reply **ESCALATE** if the agent is not responding, or **RESEND AGENT** to see the agent details again.`,
-      },
-    });
-    return;
-  }
-
-  // parse inspection intent
-  let chosen = "";
-
-  if (msg.includes("today")) chosen = "TODAY";
-  else if (msg.includes("tomorrow")) chosen = "TOMORROW";
-  else if (msg.includes("pick date") || msg.includes("date")) chosen = "PICK_DATE";
-
-  if (!chosen) {
-    await this.prisma.chatMessage.create({
-      data: {
-        chatId,
-        senderId: AI_USER_ID,
-        messageType: "SYSTEM",
-        message: `Reply: **INSPECT TODAY** / **INSPECT TOMORROW** / **PICK DATE**`,
-      },
-    });
-    return;
-  }
-
-  await this.prisma.chatMessage.create({
-    data: {
-      chatId,
-      senderId: AI_USER_ID,
-      messageType: "SYSTEM",
-      message:
-        chosen === "PICK_DATE"
-          ? `✅ Noted. Reply with your preferred inspection date and time (e.g., “Feb 2, 3pm”).`
-          : `✅ Noted. I’ve sent your inspection request (**${chosen}**) to the assigned agent. If they don’t respond within 30 minutes, reply **ESCALATE**.`,
-      metadata: { inspectionChoice: chosen },
-    },
-  });
-
-  // If TODAY/TOMORROW, mark scheduled stage immediately
-  if (chosen !== "PICK_DATE") {
-    await this.prisma.chat.update({
-      where: { id: chatId },
-      data: { vaStage: "POST_PAYMENT_SCHEDULED" },
-    });
-  }
-}
-
-/**
- * Handle message during AI phase - AI agent responds to user
- */
-async handleMessageWithAIAgent(
-  chatId: string,
-  userId: string,
-  userMessage: string,
-): Promise<any> {
-  // 0) Load chat (so we can use chat.id safely)
-  const chat = await this.prisma.chat.findUnique({
-    where: { id: chatId },
-    include: {
-      property: { select: { id: true, title: true, price: true, location: true, category: true } },
-    },
-  });
-
-  if (!chat) throw new NotFoundException('Chat not found');
-
-  // 1) Unlock keyword -> transfer
-  if (this.detectUnlockKeyword(userMessage)) {
-    return await this.transferToRealAgent(chatId, userId, userMessage);
-  }
-
-  // 2) If AI phase not started, start it + greet once
-  if (!chat.aiPhaseStartedAt) {
+  private async handlePostPaymentVa(
+    chatId: string,
+    userId: string,
+    text: string,
+  ) {
     await this.ensureBotUserExists();
 
+    const chat = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      include: {
+        property: { select: { id: true, title: true, agentId: true } },
+      },
+    });
+
+    if (!chat) return;
+
+    const msg = text.trim().toLowerCase();
+
+    // ESCALATE always works
+    if (msg.includes('escalate')) {
+      await this.prisma.chatMessage.create({
+        data: {
+          chatId,
+          senderId: AI_USER_ID,
+          messageType: 'ADMIN_NOTIFICATION',
+          message: `⚠️ User requested ESCALATION for chat ${chatId}. Please follow up immediately.`,
+          metadata: { chatId, userId, reason: 'ESCALATE' },
+        },
+      });
+
+      await this.prisma.chatMessage.create({
+        data: {
+          chatId,
+          senderId: AI_USER_ID,
+          messageType: 'SYSTEM',
+          message: `✅ Escalated to admin. You’ll be contacted shortly.`,
+        },
+      });
+
+      return;
+    }
+
+    // Only handle scheduling in INIT stage
+    if (chat.vaStage !== 'POST_PAYMENT_INIT') {
+      // keep it strict
+      await this.prisma.chatMessage.create({
+        data: {
+          chatId,
+          senderId: AI_USER_ID,
+          messageType: 'SYSTEM',
+          message: `Reply **ESCALATE** if the agent is not responding, or **RESEND AGENT** to see the agent details again.`,
+        },
+      });
+      return;
+    }
+
+    // parse inspection intent
+    let chosen = '';
+
+    if (msg.includes('today')) chosen = 'TODAY';
+    else if (msg.includes('tomorrow')) chosen = 'TOMORROW';
+    else if (msg.includes('pick date') || msg.includes('date'))
+      chosen = 'PICK_DATE';
+
+    if (!chosen) {
+      await this.prisma.chatMessage.create({
+        data: {
+          chatId,
+          senderId: AI_USER_ID,
+          messageType: 'SYSTEM',
+          message: `Reply: **INSPECT TODAY** / **INSPECT TOMORROW** / **PICK DATE**`,
+        },
+      });
+      return;
+    }
+
     await this.prisma.chatMessage.create({
       data: {
-        chatId: chat.id,
+        chatId,
         senderId: AI_USER_ID,
-        message: AI_GREETING_RESPONSES.greeting,
-        messageType: 'SYSTEM', // in your schema this exists. Don't use TEXT here.
+        messageType: 'SYSTEM',
+        message:
+          chosen === 'PICK_DATE'
+            ? `✅ Noted. Reply with your preferred inspection date and time (e.g., “Feb 2, 3pm”).`
+            : `✅ Noted. I’ve sent your inspection request (**${chosen}**) to the assigned agent. If they don’t respond within 30 minutes, reply **ESCALATE**.`,
+        metadata: { inspectionChoice: chosen },
       },
     });
 
-    await this.prisma.chat.update({
-      where: { id: chat.id },
-      data: {
-        aiPhaseStartedAt: new Date(),
-        aiConversationCount: 1,
-      },
-    });
-
-    // After greeting, stop here (user can reply next)
-    return { success: true, greeted: true };
+    // If TODAY/TOMORROW, mark scheduled stage immediately
+    if (chosen !== 'PICK_DATE') {
+      await this.prisma.chat.update({
+        where: { id: chatId },
+        data: { vaStage: 'POST_PAYMENT_SCHEDULED' },
+      });
+    }
   }
 
-  // 3) Generate AI response (call your existing chatService.sendMessage for now)
-  const context = chat.property
-    ? `Property context:
+  /**
+   * Handle message during AI phase - AI agent responds to user
+   */
+  async handleMessageWithAIAgent(
+    chatId: string,
+    userId: string,
+    userMessage: string,
+  ): Promise<any> {
+    // 0) Load chat (so we can use chat.id safely)
+    const chat = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      include: {
+        property: {
+          select: {
+            id: true,
+            title: true,
+            price: true,
+            location: true,
+            category: true,
+          },
+        },
+      },
+    });
+
+    if (!chat) throw new NotFoundException('Chat not found');
+
+    // 1) Unlock keyword -> transfer
+    if (this.detectUnlockKeyword(userMessage)) {
+      return await this.transferToRealAgent(chatId, userId, userMessage);
+    }
+
+    // 2) If AI phase not started, start it + greet once
+    if (!chat.aiPhaseStartedAt) {
+      await this.ensureBotUserExists();
+
+      await this.prisma.chatMessage.create({
+        data: {
+          chatId: chat.id,
+          senderId: AI_USER_ID,
+          message: AI_GREETING_RESPONSES.greeting,
+          messageType: 'SYSTEM', // in your schema this exists. Don't use TEXT here.
+        },
+      });
+
+      await this.prisma.chat.update({
+        where: { id: chat.id },
+        data: {
+          aiPhaseStartedAt: new Date(),
+          aiConversationCount: 1,
+        },
+      });
+
+      // After greeting, stop here (user can reply next)
+      return { success: true, greeted: true };
+    }
+
+    // 3) Generate AI response (call your existing chatService.sendMessage for now)
+    const context = chat.property
+      ? `Property context:
 Title: ${chat.property.title}
 Price: ₦${chat.property.price}
 Location: ${chat.property.location}
 Category: ${chat.property.category}
 
 Keep reply short, helpful, and Nigerian context.`
-    : undefined;
+      : undefined;
 
-  const groq = await this.chatService.sendMessage([
-    ...(context ? [{ role: 'system', content: context }] : []),
-    { role: 'user', content: userMessage },
-  ]);
+    const groq = await this.chatService.sendMessage([
+      ...(context ? [{ role: 'system', content: context }] : []),
+      { role: 'user', content: userMessage },
+    ]);
 
-  const aiText = groq?.message || "I'm here—how can I help?";
+    const aiText = groq?.message || "I'm here—how can I help?";
 
-  await this.ensureBotUserExists();
+    await this.ensureBotUserExists();
 
-  // 4) Save AI response to chat_messages
-  await this.prisma.chatMessage.create({
-    data: {
-      chatId: chat.id,
-      senderId: AI_USER_ID,
-      senderType: 'AI_AGENT', // optional, but matches your schema
-      message: aiText,
-      messageType: 'SYSTEM',
-      isAiGenerated: true,
-      aiConfidenceScore: null,
-      metadata: { mode: 'AI_PHASE' },
-    },
-  });
-
-  // 5) Update chat AI counters
-  await this.prisma.chat.update({
-    where: { id: chat.id },
-    data: { aiConversationCount: { increment: 1 } },
-  });
-
-  return { success: true };
-}
-
-
-/**
- * Check expired reservations (run via scheduled job)
- */
-async checkExpiredReservations(): Promise<void> {
-  try {
-    const now = new Date();
-
-    const expiredReservations = await this.prisma.reservationFeePayment.findMany(
-      {
-        where: {
-          expiresAt: { lt: now },
-          isExpired: false,
-        },
+    // 4) Save AI response to chat_messages
+    await this.prisma.chatMessage.create({
+      data: {
+        chatId: chat.id,
+        senderId: AI_USER_ID,
+        senderType: 'AI_AGENT', // optional, but matches your schema
+        message: aiText,
+        messageType: 'SYSTEM',
+        isAiGenerated: true,
+        aiConfidenceScore: null,
+        metadata: { mode: 'AI_PHASE' },
       },
-    );
+    });
 
-    for (const reservation of expiredReservations) {
-      // Mark as expired
-      await this.prisma.reservationFeePayment.update({
-        where: { id: reservation.id },
-        data: {
-          isExpired: true,
-          expiredAt: now,
-        },
-      });
+    // 5) Update chat AI counters
+    await this.prisma.chat.update({
+      where: { id: chat.id },
+      data: { aiConversationCount: { increment: 1 } },
+    });
 
-      // Send system message to user in chat
-      if (reservation.chatId) {
-        await this.ensureBotUserExists();
-        await this.prisma.chatMessage.create({
-          data: {
-            chatId: reservation.chatId,
-            senderId: AI_USER_ID,
-            message:
-              'Your reservation has expired. The ₦10,000 fee is non-refundable. You can reserve another property or contact support.',
-            messageType: 'SYSTEM',
+    return { success: true };
+  }
+
+  /**
+   * Check expired reservations (run via scheduled job)
+   */
+  async checkExpiredReservations(): Promise<void> {
+    try {
+      const now = new Date();
+
+      const expiredReservations =
+        await this.prisma.reservationFeePayment.findMany({
+          where: {
+            expiresAt: { lt: now },
+            isExpired: false,
           },
         });
 
-        // Update chat status
-        await this.prisma.chat.update({
-          where: { id: reservation.chatId },
+      for (const reservation of expiredReservations) {
+        // Mark as expired
+        await this.prisma.reservationFeePayment.update({
+          where: { id: reservation.id },
           data: {
-            isReservationExpired: true,
-            reservationExpiredAt: now,
+            isExpired: true,
+            expiredAt: now,
+          },
+        });
+
+        // Send system message to user in chat
+        if (reservation.chatId) {
+          await this.ensureBotUserExists();
+          await this.prisma.chatMessage.create({
+            data: {
+              chatId: reservation.chatId,
+              senderId: AI_USER_ID,
+              message:
+                'Your reservation has expired. The ₦10,000 fee is non-refundable. You can reserve another property or contact support.',
+              messageType: 'SYSTEM',
+            },
+          });
+
+          // Update chat status
+          await this.prisma.chat.update({
+            where: { id: reservation.chatId },
+            data: {
+              isReservationExpired: true,
+              reservationExpiredAt: now,
+            },
+          });
+        }
+
+        // Release property
+        await this.prisma.item.update({
+          where: { id: reservation.propertyId },
+          data: {
+            isReserved: false,
+            currentReservationBy: null,
           },
         });
       }
-
-      // Release property
-      await this.prisma.item.update({
-        where: { id: reservation.propertyId },
-        data: {
-          isReserved: false,
-          currentReservationBy: null,
-        },
-      });
+    } catch (error) {
+      console.error('Error checking expired reservations:', error);
     }
-  } catch (error) {
-    console.error('Error checking expired reservations:', error);
   }
-}
-
 
   async renewPending(chatId: string, userId: string) {
     const chat = await this.prisma.chat.findUnique({
@@ -742,152 +747,154 @@ async checkExpiredReservations(): Promise<void> {
   /**
    * Send message in chat
    */
-  /**
- * Send message in chat
- */
-async sendMessage(
-  chatId: string,
-  userId: string,
-  sendMessageDto: SendMessageDto,
-) {
-  const { message } = sendMessageDto;
+  async sendMessage(
+    chatId: string,
+    userId: string,
+    sendMessageDto: SendMessageDto,
+  ) {
+    const { message } = sendMessageDto;
 
-  // Verify chat exists
-  const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
-  if (!chat) {
-    throw new NotFoundException('Chat not found');
+    // Verify chat exists
+    const chat = await this.prisma.chat.findUnique({ where: { id: chatId }});
+    if (!chat) throw new NotFoundException('Chat not found');
+
+    // Verify sender exists and get role
+    const sender = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+    if (!sender) throw new NotFoundException('Sender not found');
+
+    // Prevent SUPER_ADMIN from sending messages
+    if (sender.role === Role.SUPER_ADMIN) {
+    throw new ForbiddenException('Super admin can only view chats');
   }
 
-  // Check authorization (user or agent only)
-  if (chat.userId !== userId && chat.agentId !== userId) {
-    throw new ForbiddenException(
-      'Not authorized to send messages in this chat',
-    );
-  }
-
-  // Can't send messages if chat is closed
-  if (chat.status === 'CLOSED') {
-    throw new BadRequestException(
-      'This chat is closed. Cannot send messages.',
-    );
-  }
-
-  // Create message
-  const newMessage = await this.prisma.chatMessage.create({
-    data: {
-      chatId,
-      senderId: userId,
-      message,
-      messageType: 'TEXT',
-    },
-    include: {
-      sender: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          avatarUrl: true,
-        },
-      },
-    },
-  });
-
-  // NEW: If user message AND chat is in AI phase, let AI respond
-  const isUserMessage = chat.userId === userId;
-
-// AI should respond if AI phase not ended
-const shouldUseAI = !chat.aiPhaseEndedAt;
-
-if (isUserMessage && shouldUseAI) {
-  await this.handleMessageWithAIAgent(chatId, userId, message);
-}
-
-
-  
-
-  // Update chat stats (existing logic)
-  const isAgent = chat.agentId === userId;
-  if (isAgent) {
-    const updateData: any = {
-      lastAgentResponseAt: new Date(),
-      agentResponseCount: { increment: 1 },
-      status: 'ACTIVE' as ChatStatus,
-    };
-
-    if (!chat.firstAgentResponseAt) {
-      updateData.firstAgentResponseAt = new Date();
-      const responseTime = Math.round(
-        (new Date().getTime() - chat.createdAt.getTime()) / (1000 * 60),
-      );
-      updateData.averageResponseTimeMinutes = responseTime;
-
-      if (responseTime <= 1440) {
-        updateData.wasAgentResponsive = true;
-      } else {
-        updateData.agentMissedFirstResponse = true;
-      }
+    // Check authorization
+    if (chat.userId !== userId && chat.agentId !== userId) {
+      throw new ForbiddenException('Not authorized');
     }
 
-    await this.prisma.chat.update({
-      where: { id: chatId },
-      data: updateData,
-    });
+    //  BLOCK AGENT DURING AI PHASE (before saving anything)
+    const isAgent = chat.agentId === userId;
+    if (isAgent && !chat.aiPhaseEndedAt) {
+      throw new BadRequestException('Wait until AI transfers the user to you');
+    }
 
-    await this.prisma.agentActivityLog.create({
+    // Create message
+    const newMessage = await this.prisma.chatMessage.create({
       data: {
         chatId,
-        agentId: userId,
-        actionType: 'MESSAGE_SENT',
-        metadata: { messageId: newMessage.id },
+        senderId: userId,
+        message,
+        messageType: 'TEXT',
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+          },
+        },
       },
     });
-  } else {
-    await this.prisma.chat.update({
-      where: { id: chatId },
-      data: {
-        userMessageCount: { increment: 1 },
-        lastUserMessageAt: new Date(),
-      },
-    });
+
+    // NEW: If user message AND chat is in AI phase, let AI respond
+    const isUserMessage = chat.userId === userId;
+
+    // AI should respond if AI phase not ended
+    const shouldUseAI = !chat.aiPhaseEndedAt;
+
+    if (isUserMessage && shouldUseAI) {
+      await this.handleMessageWithAIAgent(chatId, userId, message);
+    }
+
+    if (chat.agentId === userId && !chat.aiPhaseEndedAt) {
+      throw new BadRequestException('Wait until AI transfers the user to you');
+    }
+    // Update chat stats (existing logic)
+    const isAgentUser = chat.agentId === userId;
+    if (isAgentUser) {
+      const updateData: any = {
+        lastAgentResponseAt: new Date(),
+        agentResponseCount: { increment: 1 },
+        status: 'ACTIVE' as ChatStatus,
+      };
+
+      if (!chat.firstAgentResponseAt) {
+        updateData.firstAgentResponseAt = new Date();
+        const responseTime = Math.round(
+          (new Date().getTime() - chat.createdAt.getTime()) / (1000 * 60),
+        );
+        updateData.averageResponseTimeMinutes = responseTime;
+
+        if (responseTime <= 1440) {
+          updateData.wasAgentResponsive = true;
+        } else {
+          updateData.agentMissedFirstResponse = true;
+        }
+      }
+
+      await this.prisma.chat.update({
+        where: { id: chatId },
+        data: updateData,
+      });
+
+      await this.prisma.agentActivityLog.create({
+        data: {
+          chatId,
+          agentId: userId,
+          actionType: 'MESSAGE_SENT',
+          metadata: { messageId: newMessage.id },
+        },
+      });
+    } else {
+      await this.prisma.chat.update({
+        where: { id: chatId },
+        data: {
+          userMessageCount: { increment: 1 },
+          lastUserMessageAt: new Date(),
+        },
+      });
+    }
+
+    return newMessage;
   }
 
-  return newMessage;
-}
-
   private async ensureBotUserExists() {
-  const botId = AI_USER_ID;
+    const botId = AI_USER_ID;
 
-  const existing = await this.prisma.user.findUnique({
-    where: { id: botId },
-    select: { id: true },
-  });
+    const existing = await this.prisma.user.findUnique({
+      where: { id: botId },
+      select: { id: true },
+    });
 
-  if (existing) return;
+    if (existing) return;
 
-  const passwordHash = await bcrypt.hash(
-    process.env.AI_BOT_PASSWORD || 'BOT_ACCOUNT_DO_NOT_LOGIN',
-    10,
-  );
+    const passwordHash = await bcrypt.hash(
+      process.env.AI_BOT_PASSWORD || 'BOT_ACCOUNT_DO_NOT_LOGIN',
+      10,
+    );
 
-  await this.prisma.user.create({
-    data: {
-      id: botId,
-      email: 'bot@h12homes.ai',
-      password: passwordHash,
-      firstName: 'H12',
-      lastName: 'Assistant',
-      role: 'USER',
-      isEmailVerified: true,
-      isAgent: false,
-      isInventor: false,
-      isFurnitureMaker: false,
-    },
-  });
+    await this.prisma.user.create({
+      data: {
+        id: botId,
+        email: 'bot@h12homes.ai',
+        password: passwordHash,
+        firstName: 'H12',
+        lastName: 'Assistant',
+        role: 'USER',
+        isEmailVerified: true,
+        isAgent: false,
+        isInventor: false,
+        isFurnitureMaker: false,
+      },
+    });
 
-  console.log('✅ AI bot user created in DB:', botId);
-}
-
-
+    console.log('✅ AI bot user created in DB:', botId);
+  }
 
   private async generateVaReply(chatId: string, userText: string) {
     try {
@@ -973,41 +980,40 @@ Keep reply short, helpful, and Nigerian context.`
   }
 
   private detectUnlockKeyword(message: string): boolean {
-  const lower = message.toLowerCase().trim();
-  return AI_UNLOCK_KEYWORDS.some((kw) => lower.includes(kw));
-}
+    const lower = message.toLowerCase().trim();
+    return AI_UNLOCK_KEYWORDS.some((kw) => lower.includes(kw));
+  }
 
-private async transferToRealAgent(
-  chatId: string,
-  userId: string,
-  userKeyword: string,
-) {
-  const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
-  if (!chat) throw new NotFoundException('Chat not found');
+  private async transferToRealAgent(
+    chatId: string,
+    userId: string,
+    userKeyword: string,
+  ) {
+    const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
+    if (!chat) throw new NotFoundException('Chat not found');
 
-  await this.prisma.chat.update({
-    where: { id: chatId },
-    data: {
-      aiPhaseEndedAt: new Date(),
-      aiUnlockKeywordUsed: userKeyword,
-      agentPhaseStartedAt: new Date(),
-    },
-  });
+    await this.prisma.chat.update({
+      where: { id: chatId },
+      data: {
+        aiPhaseEndedAt: new Date(),
+        aiUnlockKeywordUsed: userKeyword,
+        agentPhaseStartedAt: new Date(),
+      },
+    });
 
-  await this.ensureBotUserExists();
-  await this.prisma.chatMessage.create({
-    data: {
-      chatId,
-      senderId: AI_USER_ID,
-      senderType: 'AI_AGENT',
-      message: '✅ Perfect! Connecting you with your agent...',
-      messageType: 'SYSTEM',
-    },
-  });
+    await this.ensureBotUserExists();
+    await this.prisma.chatMessage.create({
+      data: {
+        chatId,
+        senderId: AI_USER_ID,
+        senderType: 'AI_AGENT',
+        message: '✅ Perfect! Connecting you with your agent...',
+        messageType: 'SYSTEM',
+      },
+    });
 
-  return { success: true, transferredToAgent: true };
-}
-
+    return { success: true, transferredToAgent: true };
+  }
 
   /**
    * Admin marks payment received - AUTO CLOSES CHAT

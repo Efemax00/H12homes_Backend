@@ -25,14 +25,10 @@ import { RateAgentDto } from './dto/rate-agent.dto';
 import { ReportConversationDto } from './dto/report-conversation.dto';
 import { ChatStatus } from '@prisma/client';
 
-
-
-
 @Controller('chats')
 @UseGuards(JwtAuthGuard)
 export class ChatsController {
-  constructor(
-    private readonly chatsService: ChatsService) {}
+  constructor(private readonly chatsService: ChatsService) {}
 
   /**
    * POST /chats/create
@@ -126,16 +122,10 @@ export class ChatsController {
    * Get agent's assigned chats
    */
   @Get('agent/assigned')
-  async getAgentChats(
-    @CurrentUser() user: { id: string },
-    @Query('status') status?: string,
-  ) {
-    try {
-      const chatStatus = status ? (status as ChatStatus) : undefined;
-      return await this.chatsService.getAgentChats(user.id, chatStatus);
-    } catch (error) {
-      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-    }
+  @Roles('ADMIN', 'SUPER_ADMIN')
+  @UseGuards(RolesGuard)
+  async getAgentChats(@CurrentUser() user: { id: string }) {
+    return this.chatsService.getAgentChats(user.id);
   }
 
   /**
