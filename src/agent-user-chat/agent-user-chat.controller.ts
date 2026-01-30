@@ -75,21 +75,38 @@ async createChat(
    * Body: { propertyId }
    */
   @Post('start')
-  async startChatAndMarkPending(
-    @Body() body: { propertyId: string },
-    @CurrentUser() user: { id: string },
-  ) {
-    try {
-      if (!body?.propertyId) {
-      }
-      return await this.chatsService.startChatAndMarkPending(
-        body.propertyId,
-        user.id,
-      );
-    } catch (error) {
-      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+async startChatAndMarkPending(
+  @Body() body: { propertyId: string },
+  @CurrentUser() user: { id: string },
+) {
+  try {
+    const { propertyId } = body;
+
+    if (!propertyId) {
+      throw new BadRequestException('propertyId is required');
     }
+
+    // 🔥 VERIFY PAYMENT FIRST
+    const hasReservation = await this.reservationFeePaymentService.hasUserActiveReservation(
+      user.id,
+      propertyId,
+    );
+
+    if (!hasReservation) {
+      throw new BadRequestException(
+        'You must pay ₦10,000 reservation fee first',
+      );
+    }
+
+    // ✅ THEN create chat
+    return await this.chatsService.startChatAndMarkPending(
+      propertyId,
+      user.id,
+    );
+  } catch (error) {
+    throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
   }
+}
 
   /**
    * PATCH /chats/:id/pending/renew
