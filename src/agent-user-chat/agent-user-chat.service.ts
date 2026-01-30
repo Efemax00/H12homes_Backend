@@ -418,7 +418,7 @@ export class ChatsService {
           chatId: chat.id,
           senderId: AI_USER_ID,
           message: AI_GREETING_RESPONSES.greeting,
-          messageType: 'SYSTEM', // in your schema this exists. Don't use TEXT here.
+          messageType: 'TEXT', 
         },
       });
 
@@ -764,7 +764,7 @@ Keep reply short, helpful, and Nigerian context.`
       select: { role: true },
     });
     if (!sender) throw new NotFoundException('Sender not found');
-
+    
     // Prevent SUPER_ADMIN from sending messages
     if (sender.role === Role.SUPER_ADMIN) {
     throw new ForbiddenException('Super admin can only view chats');
@@ -775,7 +775,7 @@ Keep reply short, helpful, and Nigerian context.`
       throw new ForbiddenException('Not authorized');
     }
 
-    //  BLOCK AGENT DURING AI PHASE (before saving anything)
+    // 🔥 BLOCK AGENT DURING AI PHASE (before saving anything)
     const isAgent = chat.agentId === userId;
     if (isAgent && !chat.aiPhaseEndedAt) {
       throw new BadRequestException('Wait until AI transfers the user to you');

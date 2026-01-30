@@ -6,15 +6,21 @@ import { ChatsGateway } from '../agent-user-chat/chat.gateway';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { ItemsModule } from '../items/items.module';
 import { ChatModule } from '../chat/chat.module';
+import { ReservationFeePaymentService } from '../payment/reservation-fee-payment.service';
+import {PaystackModule} from '../paystack/paystack.module';
+
+
+
 
 @Module({
   imports: [
     PrismaModule,   // ✅ provides PrismaService
     ItemsModule,    // ✅ provides ItemsService (must be exported from ItemsModule)
-    ChatModule,     // ✅ provides ChatService (must be exported from ChatModule)
+    ChatModule, 
+    PaystackModule, // ✅ provides PaystackService (must be exported from PaystackModule)
   ],
   controllers: [ChatsController],
-  providers: [ChatsService, ChatsGateway],
+  providers: [ChatsService,ReservationFeePaymentService, ChatsGateway],
   exports: [ChatsService, ChatsGateway],
 })
 export class ChatsModule {}
