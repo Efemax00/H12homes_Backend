@@ -470,10 +470,8 @@ async releaseSoftHoldForChat(propertyId: string, userId: string) {
       throw new BadRequestException('Invalid rentDurationMonths value');
     }
 
-    // 💰 ---- COMMISSION CONFIG (platform-fixed) ----
-    const agentCommissionPercent = COMMISSION_CONFIG.AGENT_SHARE_PERCENT;
-    const companyCommissionPercent = COMMISSION_CONFIG.COMPANY_SHARE_PERCENT;
-    const platformFeePercent = COMMISSION_CONFIG.PLATFORM_FEE_PERCENT;
+    const platformFeePercent = 10; // Example: 10% platform fee
+
 
     // 🧑‍💼 ---- LANDLORD (from DTO) ----
     const {
@@ -562,11 +560,9 @@ async releaseSoftHoldForChat(propertyId: string, userId: string) {
         rentStartDate: null,
         rentEndDate: null,
         autoReopenAt: null,
+        platformFeePercent: platformFeePercent,
 
-        // Commissions (platform-fixed)
-        agentCommissionPercent,
-        companyCommissionPercent,
-        platformFeePercent,
+        
 
         // Ownership / Agent
         ownerId: null,
