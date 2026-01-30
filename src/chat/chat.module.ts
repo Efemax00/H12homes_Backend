@@ -5,6 +5,7 @@ import { ItemsModule } from 'src/items/items.module';
 import { PrismaModule } from '../../prisma/prisma.module'; 
 
 
+
 @Module({
   controllers: [ChatController],
   providers: [ChatService],

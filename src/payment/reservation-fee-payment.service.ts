@@ -100,136 +100,166 @@ export class ReservationFeePaymentService {
     return {
       authorizationUrl: paymentData.authorization_url,
       accessCode: paymentData.access_code,
-      reference: paymentData.reference,
+      reference: reference,
       amount,
       expiresIn: `${this.RESERVATION_PERIOD_DAYS} days`,
     };
   }
 
   async verifyReservationFee(reference: string) {
-    // 1. Verify payment with Paystack
-    const verified = await this.paystack.verifyPayment(reference);
+  // ✅ LOG 1: did we even enter verify?
+  console.log("✅ [VERIFY] HIT with reference:", reference);
 
-    // 2. Find payment record
-    const payment = await this.prisma.reservationFeePayment.findUnique({
-      where: { paystackReference: reference },
-      include: {
-        property: {
-          select: {
-            id: true,
-            title: true,
-            location: true,
-            price: true,
-            isReserved: true,
-            currentReservationBy: true,
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            email: true,
-            firstName: true,
-            lastName: true,
-          },
+  // 1. Verify payment with Paystack
+  const verified = await this.paystack.verifyPayment(reference);
+
+  // ✅ LOG 2: what did Paystack say?
+  console.log("✅ [VERIFY] Paystack result:", {
+    status: verified.status,
+    paystackRef: verified.reference,
+    paidAt: verified.paidAt,
+    amount: verified.amount,
+  });
+
+  // 2. Find payment record
+  const payment = await this.prisma.reservationFeePayment.findUnique({
+    where: { paystackReference: reference },
+    include: {
+      property: {
+        select: {
+          id: true,
+          title: true,
+          location: true,
+          price: true,
+          isReserved: true,
+          currentReservationBy: true,
         },
       },
-    });
-
-    if (!payment) {
-      throw new BadRequestException('Payment record not found');
-    }
-
-    // 3. If already verified, return success
-    if (payment.status === 'SUCCESS') {
-      return {
-        success: true,
-        message: 'Payment already verified',
-        payment,
-      };
-    }
-
-    // after verified = await this.paystack.verifyPayment(reference);
-
-if (verified.status !== 'success') {
-  // mark FAILED (or keep PENDING), but DO NOT reserve
-  await this.prisma.reservationFeePayment.update({
-    where: { paystackReference: reference },
-    data: {
-      status: 'FAILED',
-      metadata: {
-        ...(payment.metadata as any),
-        verifyStatus: verified.status,
+      user: {
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+        },
       },
     },
   });
 
-  throw new BadRequestException(`Payment not successful: ${verified.status}`);
-}
+  // ✅ LOG 3: did we find the DB row?
+  console.log("✅ [VERIFY] DB payment found?", {
+    found: !!payment,
+    dbRef: payment?.paystackReference,
+    dbStatus: payment?.status,
+    dbUserId: payment?.userId,
+    dbPropertyId: payment?.propertyId,
+  });
 
+  if (!payment) {
+    throw new BadRequestException("Payment record not found");
+  }
 
-    // 4. Double-check property is still available (in case it was reserved elsewhere)
-    if (
-      payment.property.isReserved &&
-      payment.property.currentReservationBy !== payment.userId
-    ) {
-      throw new BadRequestException(
-        'Property has been reserved by another user. Payment cancelled.',
-      );
-    }
+  // 3. If already verified, return success
+  if (payment.status === "SUCCESS") {
+    console.log("ℹ️ [VERIFY] Already SUCCESS, skipping update.");
+    return {
+      success: true,
+      message: "Payment already verified",
+      payment,
+    };
+  }
 
-    // 5. Update payment status to SUCCESS
-    const updatedPayment = await this.prisma.reservationFeePayment.update({
+  if (verified.status !== "success") {
+    console.log("❌ [VERIFY] Paystack not success -> marking FAILED:", verified.status);
+
+    await this.prisma.reservationFeePayment.update({
       where: { paystackReference: reference },
       data: {
-        status: 'SUCCESS',
-        paidAt: verified.paidAt ? new Date(verified.paidAt) : new Date(),
-
-      },
-    });
-
-    // 6. Lock the property (reserve it for this user)
-    const expiresAt = new Date();
-    expiresAt.setDate(
-      expiresAt.getDate() + this.RESERVATION_PERIOD_DAYS,
-    );
-
-    await this.prisma.item.update({
-      where: { id: payment.propertyId },
-      data: {
-        isReserved: true,
-        currentReservationBy: payment.userId,
-        reservationStartedAt: new Date(),
-        reservationExpiresAt: expiresAt,
-        reservationFeeStatus: 'PAID',
-        reservationFeePaidAt: new Date(),
-        status: 'PENDING', // Property shows PENDING to other users
-      },
-    });
-
-    // 7. Track engagement analytics
-    await this.prisma.propertyEngagement.create({
-      data: {
-        propertyId: payment.propertyId,
-        userId: payment.userId,
-        actionType: 'CLICKED_INTERESTED',
+        status: "FAILED",
         metadata: {
-          reservationFeePaid: true,
-          amount: payment.amount,
-          expiresAt: expiresAt.toISOString(),
+          ...(payment.metadata as any),
+          verifyStatus: verified.status,
         },
       },
     });
 
-    return {
-      success: true,
-      message: 'Property reserved successfully for 7 days',
-      payment: updatedPayment,
-      reservation: {
-        reservedUntil: expiresAt,
-        daysRemaining: this.RESERVATION_PERIOD_DAYS,
-      },
-    };
+    throw new BadRequestException(`Payment not successful: ${verified.status}`);
   }
+
+  // 4. Double-check property is still available
+  if (payment.property.isReserved && payment.property.currentReservationBy !== payment.userId) {
+    console.log("❌ [VERIFY] Property already reserved by another user:", {
+      isReserved: payment.property.isReserved,
+      currentReservationBy: payment.property.currentReservationBy,
+      paymentUserId: payment.userId,
+    });
+
+    throw new BadRequestException("Property has been reserved by another user. Payment cancelled.");
+  }
+
+  // 5. Update payment status to SUCCESS
+  const updatedPayment = await this.prisma.reservationFeePayment.update({
+    where: { paystackReference: reference },
+    data: {
+      status: "SUCCESS",
+      paidAt: verified.paidAt ? new Date(verified.paidAt) : new Date(),
+    },
+  });
+
+  // ✅ LOG 4: confirm DB updated
+  console.log("✅ [VERIFY] Payment updated to SUCCESS:", {
+    id: updatedPayment.id,
+    status: updatedPayment.status,
+  });
+
+  // 6. Lock the property
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + this.RESERVATION_PERIOD_DAYS);
+
+  const updatedItem = await this.prisma.item.update({
+    where: { id: payment.propertyId },
+    data: {
+      isReserved: true,
+      currentReservationBy: payment.userId,
+      reservationStartedAt: new Date(),
+      reservationExpiresAt: expiresAt,
+      reservationFeeStatus: "PAID",
+      reservationFeePaidAt: new Date(),
+      status: "PENDING",
+    },
+    select: { id: true, isReserved: true, currentReservationBy: true, reservationExpiresAt: true },
+  });
+
+  // ✅ LOG 5: confirm property locked
+  console.log("✅ [VERIFY] Property locked:", updatedItem);
+
+  // 7. Track engagement analytics
+  await this.prisma.propertyEngagement.create({
+    data: {
+      propertyId: payment.propertyId,
+      userId: payment.userId,
+      actionType: "CLICKED_INTERESTED",
+      metadata: {
+        reservationFeePaid: true,
+        amount: payment.amount,
+        expiresAt: expiresAt.toISOString(),
+      },
+    },
+  });
+
+  console.log("✅ [VERIFY] DONE OK");
+
+  return {
+    success: true,
+    message: "Property reserved successfully for 7 days",
+    payment: updatedPayment,
+    reservation: {
+      reservedUntil: expiresAt,
+      daysRemaining: this.RESERVATION_PERIOD_DAYS,
+    },
+  };
+}
+
 
   async hasUserActiveReservation(
     userId: string,
