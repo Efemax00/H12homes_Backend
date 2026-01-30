@@ -84,7 +84,7 @@ export class MessagesService {
 
       // 3a. Notify admin (only if property has an owner)
       if (property.createdBy) {
-        await this.prisma.chatMessage.create({
+        this.prisma.propertyChatMessage.create({
           data: {
             propertyId,
             senderId: userId,
@@ -116,7 +116,7 @@ export class MessagesService {
             ? `\nNote: ${COMPANY_PAYMENT_INSTRUCTIONS}`
             : '');
 
-        await this.prisma.chatMessage.create({
+        await this.prisma.propertyChatMessage.create({
           data: {
             propertyId,
             senderId,
@@ -205,19 +205,17 @@ export class MessagesService {
     const conversationsWithMessages = await Promise.all(
       interests.map(async (interest) => {
         // ✅ FIX: Only get messages between THIS user and the admin
-        const lastMessage = await this.prisma.chatMessage.findFirst({
-          where: {
-            propertyId: interest.propertyId,
-            OR: [{ senderId: userId }, { receiverId: userId }],
-          },
-          orderBy: { createdAt: 'desc' },
-          select: {
-            message: true,
-            createdAt: true,
-          },
-        });
+        const lastMessage = await this.prisma.propertyChatMessage.findFirst({
+  where: {
+    propertyId: interest.propertyId,
+    OR: [{ senderId: userId }, { receiverId: userId }],
+  },
+  orderBy: { createdAt: 'desc' },
+  select: { message: true, createdAt: true },
+});
 
-        const unreadCount = await this.prisma.chatMessage.count({
+
+        const unreadCount = await this.prisma.propertyChatMessage.count({
           where: {
             propertyId: interest.propertyId,
             receiverId: userId,
@@ -298,7 +296,7 @@ export class MessagesService {
     }
 
     // Create message
-    const chatMessage = await this.prisma.chatMessage.create({
+    const chatMessage = await this.prisma.propertyChatMessage.create({
       data: {
         propertyId,
         senderId,
@@ -364,7 +362,7 @@ export class MessagesService {
     }
 
     // ✅ FIX: Only get messages where current user is sender OR receiver
-    const messages = await this.prisma.chatMessage.findMany({
+    const messages = await this.prisma.propertyChatMessage.findMany({
       where: {
         propertyId,
         OR: [{ senderId: userId }, { receiverId: userId }],
@@ -383,7 +381,7 @@ export class MessagesService {
     });
 
     // Mark messages as read if user is receiver
-    await this.prisma.chatMessage.updateMany({
+    await this.prisma.propertyChatMessage.updateMany({
       where: {
         propertyId,
         receiverId: userId,
@@ -442,7 +440,7 @@ export class MessagesService {
     const conversations = await Promise.all(
       interests.map(async (interest) => {
         // Get last message between admin and THIS specific buyer
-        const lastMessage = await this.prisma.chatMessage.findFirst({
+        const lastMessage = await this.prisma.propertyChatMessage.findFirst({
           where: {
             propertyId: interest.propertyId,
             OR: [
@@ -458,7 +456,7 @@ export class MessagesService {
         });
 
         // Get unread count from THIS buyer to admin
-        const unreadCount = await this.prisma.chatMessage.count({
+        const unreadCount = await this.prisma.propertyChatMessage.count({
           where: {
             propertyId: interest.propertyId,
             senderId: interest.userId,
@@ -495,7 +493,7 @@ export class MessagesService {
    * Get all conversations platform-wide (SUPER_ADMIN only)
    */
   async getAllConversations() {
-    return this.prisma.chatMessage.findMany({
+    return this.prisma.propertyChatMessage.findMany({
       distinct: ['propertyId'],
       include: {
         property: {
@@ -683,7 +681,7 @@ export class MessagesService {
     });
 
     // 9. Notify buyer via system message
-    await this.prisma.chatMessage.create({
+    await this.prisma.propertyChatMessage.create({
       data: {
         propertyId,
         senderId: adminId,

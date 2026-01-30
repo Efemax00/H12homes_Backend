@@ -17,9 +17,50 @@ import { ChatService } from '../chat/chat.service';
 import { toWhatsAppLink } from '../utils/whatsapp.util';
 
 
-
+interface AIMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
 
 const AI_USER_ID = '00000000-0000-0000-0000-000000000001';
+
+// AI Agent Configuration
+const AI_UNLOCK_KEYWORDS = [
+  "i'm ready to meet my agent",
+  "connect me to agent",
+  "talk to the agent",
+  "ready for agent",
+  "agent please",
+  "i'm ready for agent",
+  "connect to agent",
+  "ready to meet agent",
+  "transfer to agent",
+];
+
+const AI_GREETING_RESPONSES = {
+  greeting: `Hi! 👋 Welcome to H12 Homes!
+
+I see you've reserved this property. Before I connect you with your dedicated agent, let me help you think through what you're looking for. This will help our agent tailor the best experience for you.
+
+What's most important to you in this property? 
+- Location & accessibility
+- Modern amenities  
+- Price & affordability
+- Size & space
+- Safety & security`,
+
+  unlock_prompt: `Perfect! I've got a good understanding of what you're looking for.
+
+🔑 Your dedicated agent is ready to take over from here. They can:
+- Schedule property viewings
+- Discuss terms & finalization
+- Answer any questions about the property
+- Process your offer
+
+To connect with them, simply reply with: **"I'm ready to meet my agent"**
+
+(Or just type something like "connect me to agent" - I'll understand!)`,
+};
 
 @Injectable()
 export class ChatsService {
@@ -152,7 +193,7 @@ const agent = property.agentId
 const waLink = agent?.phone ? toWhatsAppLink(agent.phone)
  : null;
 
-await this.prisma.chatMessageModel.create({
+await this.prisma.chatMessage.create({
   data: {
     chatId: chat.id,
     senderId: AI_USER_ID,
@@ -181,7 +222,7 @@ await this.prisma.chat.update({
 
     } else {
       // Agent chat - message from agent
-      await this.prisma.chatMessageModel.create({
+      await this.prisma.chatMessage.create({
         data: {
           chatId: chat.id,
           senderId: agentId!, // agentId is guaranteed to exist in AGENT chat type
@@ -260,7 +301,7 @@ await this.prisma.chat.update({
 
   // ESCALATE always works
   if (msg.includes("escalate")) {
-    await this.prisma.chatMessageModel.create({
+    await this.prisma.chatMessage.create({
       data: {
         chatId,
         senderId: AI_USER_ID,
@@ -270,7 +311,7 @@ await this.prisma.chat.update({
       },
     });
 
-    await this.prisma.chatMessageModel.create({
+    await this.prisma.chatMessage.create({
       data: {
         chatId,
         senderId: AI_USER_ID,
@@ -285,7 +326,7 @@ await this.prisma.chat.update({
   // Only handle scheduling in INIT stage
   if (chat.vaStage !== "POST_PAYMENT_INIT") {
     // keep it strict
-    await this.prisma.chatMessageModel.create({
+    await this.prisma.chatMessage.create({
       data: {
         chatId,
         senderId: AI_USER_ID,
@@ -304,7 +345,7 @@ await this.prisma.chat.update({
   else if (msg.includes("pick date") || msg.includes("date")) chosen = "PICK_DATE";
 
   if (!chosen) {
-    await this.prisma.chatMessageModel.create({
+    await this.prisma.chatMessage.create({
       data: {
         chatId,
         senderId: AI_USER_ID,
@@ -315,7 +356,7 @@ await this.prisma.chat.update({
     return;
   }
 
-  await this.prisma.chatMessageModel.create({
+  await this.prisma.chatMessage.create({
     data: {
       chatId,
       senderId: AI_USER_ID,
@@ -334,6 +375,161 @@ await this.prisma.chat.update({
       where: { id: chatId },
       data: { vaStage: "POST_PAYMENT_SCHEDULED" },
     });
+  }
+}
+
+/**
+ * Handle message during AI phase - AI agent responds to user
+ */
+async handleMessageWithAIAgent(
+  chatId: string,
+  userId: string,
+  userMessage: string,
+): Promise<any> {
+  // 0) Load chat (so we can use chat.id safely)
+  const chat = await this.prisma.chat.findUnique({
+    where: { id: chatId },
+    include: {
+      property: { select: { id: true, title: true, price: true, location: true, category: true } },
+    },
+  });
+
+  if (!chat) throw new NotFoundException('Chat not found');
+
+  // 1) Unlock keyword -> transfer
+  if (this.detectUnlockKeyword(userMessage)) {
+    return await this.transferToRealAgent(chatId, userId, userMessage);
+  }
+
+  // 2) If AI phase not started, start it + greet once
+  if (!chat.aiPhaseStartedAt) {
+    await this.ensureBotUserExists();
+
+    await this.prisma.chatMessage.create({
+      data: {
+        chatId: chat.id,
+        senderId: AI_USER_ID,
+        message: AI_GREETING_RESPONSES.greeting,
+        messageType: 'SYSTEM', // in your schema this exists. Don't use TEXT here.
+      },
+    });
+
+    await this.prisma.chat.update({
+      where: { id: chat.id },
+      data: {
+        aiPhaseStartedAt: new Date(),
+        aiConversationCount: 1,
+      },
+    });
+
+    // After greeting, stop here (user can reply next)
+    return { success: true, greeted: true };
+  }
+
+  // 3) Generate AI response (call your existing chatService.sendMessage for now)
+  const context = chat.property
+    ? `Property context:
+Title: ${chat.property.title}
+Price: ₦${chat.property.price}
+Location: ${chat.property.location}
+Category: ${chat.property.category}
+
+Keep reply short, helpful, and Nigerian context.`
+    : undefined;
+
+  const groq = await this.chatService.sendMessage([
+    ...(context ? [{ role: 'system', content: context }] : []),
+    { role: 'user', content: userMessage },
+  ]);
+
+  const aiText = groq?.message || "I'm here—how can I help?";
+
+  await this.ensureBotUserExists();
+
+  // 4) Save AI response to chat_messages
+  await this.prisma.chatMessage.create({
+    data: {
+      chatId: chat.id,
+      senderId: AI_USER_ID,
+      senderType: 'AI_AGENT', // optional, but matches your schema
+      message: aiText,
+      messageType: 'SYSTEM',
+      isAiGenerated: true,
+      aiConfidenceScore: null,
+      metadata: { mode: 'AI_PHASE' },
+    },
+  });
+
+  // 5) Update chat AI counters
+  await this.prisma.chat.update({
+    where: { id: chat.id },
+    data: { aiConversationCount: { increment: 1 } },
+  });
+
+  return { success: true };
+}
+
+
+/**
+ * Check expired reservations (run via scheduled job)
+ */
+async checkExpiredReservations(): Promise<void> {
+  try {
+    const now = new Date();
+
+    const expiredReservations = await this.prisma.reservationFeePayment.findMany(
+      {
+        where: {
+          expiresAt: { lt: now },
+          isExpired: false,
+        },
+      },
+    );
+
+    for (const reservation of expiredReservations) {
+      // Mark as expired
+      await this.prisma.reservationFeePayment.update({
+        where: { id: reservation.id },
+        data: {
+          isExpired: true,
+          expiredAt: now,
+        },
+      });
+
+      // Send system message to user in chat
+      if (reservation.chatId) {
+        await this.ensureBotUserExists();
+        await this.prisma.chatMessage.create({
+          data: {
+            chatId: reservation.chatId,
+            senderId: AI_USER_ID,
+            message:
+              'Your reservation has expired. The ₦10,000 fee is non-refundable. You can reserve another property or contact support.',
+            messageType: 'SYSTEM',
+          },
+        });
+
+        // Update chat status
+        await this.prisma.chat.update({
+          where: { id: reservation.chatId },
+          data: {
+            isReservationExpired: true,
+            reservationExpiredAt: now,
+          },
+        });
+      }
+
+      // Release property
+      await this.prisma.item.update({
+        where: { id: reservation.propertyId },
+        data: {
+          isReserved: false,
+          currentReservationBy: null,
+        },
+      });
+    }
+  } catch (error) {
+    console.error('Error checking expired reservations:', error);
   }
 }
 
@@ -421,7 +617,7 @@ await this.prisma.chat.update({
     }
 
     // Mark messages as read
-    await this.prisma.chatMessageModel.updateMany({
+    await this.prisma.chatMessage.updateMany({
       where: { chatId, senderId: { not: userId } },
       data: { readAt: new Date() },
     });
@@ -546,124 +742,117 @@ await this.prisma.chat.update({
   /**
    * Send message in chat
    */
-  async sendMessage(
-    chatId: string,
-    userId: string,
-    sendMessageDto: SendMessageDto,
-  ) {
-    const { message } = sendMessageDto;
+  /**
+ * Send message in chat
+ */
+async sendMessage(
+  chatId: string,
+  userId: string,
+  sendMessageDto: SendMessageDto,
+) {
+  const { message } = sendMessageDto;
 
-    // Verify chat exists
-    const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
-    if (!chat) {
-      throw new NotFoundException('Chat not found');
-    }
+  // Verify chat exists
+  const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
+  if (!chat) {
+    throw new NotFoundException('Chat not found');
+  }
 
-    // Check authorization (user or agent only)
-    if (chat.userId !== userId && chat.agentId !== userId) {
-      throw new ForbiddenException(
-        'Not authorized to send messages in this chat',
-      );
-    }
+  // Check authorization (user or agent only)
+  if (chat.userId !== userId && chat.agentId !== userId) {
+    throw new ForbiddenException(
+      'Not authorized to send messages in this chat',
+    );
+  }
 
-    // Can't send messages if chat is closed
-    if (chat.status === 'CLOSED') {
-      throw new BadRequestException(
-        'This chat is closed. Cannot send messages.',
-      );
-    }
+  // Can't send messages if chat is closed
+  if (chat.status === 'CLOSED') {
+    throw new BadRequestException(
+      'This chat is closed. Cannot send messages.',
+    );
+  }
 
-    // Create message
-    const newMessage = await this.prisma.chatMessageModel.create({
-      data: {
-        chatId,
-        senderId: userId,
-        message,
-        messageType: 'TEXT',
-      },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatarUrl: true,
-          },
+  // Create message
+  const newMessage = await this.prisma.chatMessage.create({
+    data: {
+      chatId,
+      senderId: userId,
+      message,
+      messageType: 'TEXT',
+    },
+    include: {
+      sender: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          avatarUrl: true,
         },
       },
-    });
-
-    // ✅ Auto-reply only for VA chats (agentId is null)
-    const isVAChat = !chat.agentId;
-
-    if (isVAChat) {
-  const freshChat = await this.prisma.chat.findUnique({
-    where: { id: chatId },
-    select: { vaStage: true },
+    },
   });
 
-  if (freshChat?.vaStage === "POST_PAYMENT_INIT" || freshChat?.vaStage === "POST_PAYMENT_SCHEDULED") {
-    await this.handlePostPaymentVa(chatId, userId, message);
-  }
+  // NEW: If user message AND chat is in AI phase, let AI respond
+  const isUserMessage = chat.userId === userId;
+
+// AI should respond if AI phase not ended
+const shouldUseAI = !chat.aiPhaseEndedAt;
+
+if (isUserMessage && shouldUseAI) {
+  await this.handleMessageWithAIAgent(chatId, userId, message);
 }
 
 
+  
 
-    // Update chat stats
-    const isAgent = chat.agentId === userId;
-    if (isAgent) {
-      // Agent responded
-      const updateData: any = {
-        lastAgentResponseAt: new Date(),
-        agentResponseCount: { increment: 1 },
-        status: 'ACTIVE' as ChatStatus,
-      };
+  // Update chat stats (existing logic)
+  const isAgent = chat.agentId === userId;
+  if (isAgent) {
+    const updateData: any = {
+      lastAgentResponseAt: new Date(),
+      agentResponseCount: { increment: 1 },
+      status: 'ACTIVE' as ChatStatus,
+    };
 
-      // Track first response
-      if (!chat.firstAgentResponseAt) {
-        updateData.firstAgentResponseAt = new Date();
+    if (!chat.firstAgentResponseAt) {
+      updateData.firstAgentResponseAt = new Date();
+      const responseTime = Math.round(
+        (new Date().getTime() - chat.createdAt.getTime()) / (1000 * 60),
+      );
+      updateData.averageResponseTimeMinutes = responseTime;
 
-        // Calculate response time in minutes
-        const responseTime = Math.round(
-          (new Date().getTime() - chat.createdAt.getTime()) / (1000 * 60),
-        );
-        updateData.averageResponseTimeMinutes = responseTime;
-
-        // Check if within 24 hours
-        if (responseTime <= 1440) {
-          updateData.wasAgentResponsive = true;
-        } else {
-          updateData.agentMissedFirstResponse = true;
-        }
+      if (responseTime <= 1440) {
+        updateData.wasAgentResponsive = true;
+      } else {
+        updateData.agentMissedFirstResponse = true;
       }
-
-      await this.prisma.chat.update({
-        where: { id: chatId },
-        data: updateData,
-      });
-
-      // Log agent activity
-      await this.prisma.agentActivityLog.create({
-        data: {
-          chatId,
-          agentId: userId,
-          actionType: 'MESSAGE_SENT',
-          metadata: { messageId: newMessage.id },
-        },
-      });
-    } else {
-      // User sent message
-      await this.prisma.chat.update({
-        where: { id: chatId },
-        data: {
-          userMessageCount: { increment: 1 },
-          lastUserMessageAt: new Date(),
-        },
-      });
     }
 
-    return newMessage;
+    await this.prisma.chat.update({
+      where: { id: chatId },
+      data: updateData,
+    });
+
+    await this.prisma.agentActivityLog.create({
+      data: {
+        chatId,
+        agentId: userId,
+        actionType: 'MESSAGE_SENT',
+        metadata: { messageId: newMessage.id },
+      },
+    });
+  } else {
+    await this.prisma.chat.update({
+      where: { id: chatId },
+      data: {
+        userMessageCount: { increment: 1 },
+        lastUserMessageAt: new Date(),
+      },
+    });
   }
+
+  return newMessage;
+}
 
   private async ensureBotUserExists() {
   const botId = AI_USER_ID;
@@ -739,7 +928,7 @@ Keep reply short, helpful, and Nigerian context.`
 
       const aiText = groq?.message || "I'm here—how can I help?";
       await this.ensureBotUserExists();
-      const saved = await this.prisma.chatMessageModel.create({
+      const saved = await this.prisma.chatMessage.create({
         data: {
           chatId,
           senderId: AI_USER_ID,
@@ -765,7 +954,7 @@ Keep reply short, helpful, and Nigerian context.`
     limit: number = 50,
     offset: number = 0,
   ) {
-    return this.prisma.chatMessageModel.findMany({
+    return this.prisma.chatMessage.findMany({
       where: { chatId },
       orderBy: { createdAt: 'asc' },
       skip: offset,
@@ -782,6 +971,43 @@ Keep reply short, helpful, and Nigerian context.`
       },
     });
   }
+
+  private detectUnlockKeyword(message: string): boolean {
+  const lower = message.toLowerCase().trim();
+  return AI_UNLOCK_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+private async transferToRealAgent(
+  chatId: string,
+  userId: string,
+  userKeyword: string,
+) {
+  const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
+  if (!chat) throw new NotFoundException('Chat not found');
+
+  await this.prisma.chat.update({
+    where: { id: chatId },
+    data: {
+      aiPhaseEndedAt: new Date(),
+      aiUnlockKeywordUsed: userKeyword,
+      agentPhaseStartedAt: new Date(),
+    },
+  });
+
+  await this.ensureBotUserExists();
+  await this.prisma.chatMessage.create({
+    data: {
+      chatId,
+      senderId: AI_USER_ID,
+      senderType: 'AI_AGENT',
+      message: '✅ Perfect! Connecting you with your agent...',
+      messageType: 'SYSTEM',
+    },
+  });
+
+  return { success: true, transferredToAgent: true };
+}
+
 
   /**
    * Admin marks payment received - AUTO CLOSES CHAT
@@ -836,7 +1062,7 @@ Keep reply short, helpful, and Nigerian context.`
       ? ` ${updatedChat.agent?.firstName}, agent fee of ₦${updatedChat.agentFeeAmount?.toLocaleString()} will be processed.`
       : '';
 
-    await this.prisma.chatMessageModel.create({
+    await this.prisma.chatMessage.create({
       data: {
         chatId,
         senderId: adminId,
@@ -1017,7 +1243,7 @@ Keep reply short, helpful, and Nigerian context.`
     });
 
     // Send message to user
-    await this.prisma.chatMessageModel.create({
+    await this.prisma.chatMessage.create({
       data: {
         chatId,
         senderId: adminId,

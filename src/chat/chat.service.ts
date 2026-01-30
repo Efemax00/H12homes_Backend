@@ -1,18 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Groq from 'groq-sdk';
+import { PrismaService } from '../../prisma/prisma.service';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
 }
 
+const AI_USER_ID = '00000000-0000-0000-0000-000000000001';
+
 @Injectable()
 export class ChatService {
   private groq: Groq;
+  
 
   constructor(
-    private configService: ConfigService) {
+    private configService: ConfigService,
+    private prisma: PrismaService) {
     const apiKey = this.configService.get<string>('GROQ_API_KEY');
     this.groq = new Groq({ apiKey });
   }
@@ -370,4 +375,92 @@ Be warm and congratulatory. Takes 1-2 days. Make them excited about next steps.`
       ...userMessages,
     ];
   }
+
+  /**
+ * Generate AI response for property chat
+ * Used by AI Agent during chat phase
+ */
+async generateAIResponse(chatId: string, userMessage: string): Promise<string> {
+  try {
+    const chat = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      include: {
+        property: {
+          select: {
+            title: true,
+            price: true,
+            location: true,
+            shortDesc: true,
+            bedrooms: true,
+            bathrooms: true,
+            category: true,
+          },
+        },
+      },
+    });
+
+    if (!chat?.property) {
+      return "I appreciate your interest! Let me get more information for you.";
+    }
+
+    const propertyContext = `
+Property Context:
+- Title: ${chat.property.title}
+- Price: ₦${Number(chat.property.price || 0).toLocaleString()}
+- Location: ${chat.property.location}
+- Description: ${chat.property.shortDesc ?? 'N/A'}
+- Bedrooms: ${chat.property.bedrooms ?? 'N/A'}
+- Bathrooms: ${chat.property.bathrooms ?? 'N/A'}
+- Category: ${chat.property.category}
+
+Keep replies short (2–3 sentences), helpful, and natural. Use Nigerian context.
+After 2–3 exchanges, guide them to meet the real agent using the unlock phrase.
+Never make up property facts.
+`;
+
+    const recentMessages = await this.prisma.chatMessage.findMany({
+      where: { chatId },
+      orderBy: { createdAt: 'desc' },
+      take: 6,
+    });
+
+    // Map roles better: if senderId is AI bot -> assistant, else user
+    const conversationHistory = recentMessages
+      .reverse()
+      .map((msg) => ({
+        role: msg.senderId === AI_USER_ID ? ('assistant' as const) : ('user' as const),
+        content: msg.message,
+      }));
+
+    const systemPrompt = `You are H12 Homes' friendly AI Property Assistant.
+
+${propertyContext}
+
+Behavior rules:
+- Be warm, not robotic
+- Ask 1 short question when needed
+- If user asks about inspection/payment, push them toward "I'm ready to meet my agent"
+- Never invent details`;
+
+    const chatCompletion = await this.groq.chat.completions.create({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...conversationHistory,
+        { role: 'user', content: userMessage },
+      ],
+      model: 'llama-3.3-70b-versatile',
+      temperature: 0.7,
+      max_tokens: 300,
+      top_p: 0.9,
+    });
+
+    return (
+      chatCompletion.choices?.[0]?.message?.content ||
+      "Thanks for your interest! If you're ready, reply: **I'm ready to meet my agent**"
+    );
+  } catch (error) {
+    console.error('Error generating AI response:', error);
+    return "Thanks for that! To move forward quickly, reply: **I'm ready to meet my agent**";
+  }
+}
 }

@@ -406,7 +406,7 @@ export class AnalyticsService {
       where: { propertyId, status: 'ACTIVE' },
     });
 
-    const messages = await this.prisma.chatMessage.count({
+    const messages = await this.prisma.propertyChatMessage.count({
       where: { propertyId },
     });
 

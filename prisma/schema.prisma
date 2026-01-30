@@ -32,9 +32,9 @@ model User {
   avatarUrl  String? @map("avatar_url")
   role       Role    @default(USER)
   
-  // NEW: User type flags
-  isAgent    Boolean @default(false)  // Real estate agent
-  isInventor Boolean @default(false) // Furniture maker/custom items seller
+  // User type flags
+  isAgent          Boolean @default(false)
+  isInventor       Boolean @default(false)
   isFurnitureMaker Boolean @default(false)
 
   ownedProperties Item[] @relation("OwnerRelation")
@@ -50,8 +50,8 @@ model User {
   lastLoginAttempt    DateTime?
 
   interests        PropertyInterest[]   @relation("UserInterests")
-  sentMessages     ChatMessage[]        @relation("SentMessages")
-  receivedMessages ChatMessage[]        @relation("ReceivedMessages")
+  sentOldMessages  PropertyChatMessage[] @relation("SentMessages")
+  receivedMessages PropertyChatMessage[] @relation("ReceivedMessages")
   purchases        Sale[]               @relation("Purchases")
   sales            Sale[]               @relation("Sales")
   auditLogs        AuditLog[]           @relation("UserAuditLogs")
@@ -60,50 +60,51 @@ model User {
 
   itemsCreated Item[] @relation("ItemCreatedBy")
 
-  // NEW: payments, commissions, finance reviews
   payments             Payment[]
   adminCommissions     Commission[] @relation("AdminCommissions")
   financeReviewedSales Sale[]       @relation("FinanceReviewedSales")
 
-  viewingFeePayments   ViewingFeePayment[] @relation("UserViewingFees")
+  viewingFeePayments ViewingFeePayment[] @relation("UserViewingFees")
   
-  // NEW: Virtual Assistant Chat
+  // Virtual Assistant Chat
   virtualAssistantChats VirtualAssistantChat[] @relation("UserVAChats")
   
-  // NEW: Household items / custom items
-  householdItemsSold    HouseholdItem[] @relation("HouseholdItemSeller")
+  // Household items
+  householdItemsSold      HouseholdItem[] @relation("HouseholdItemSeller")
   householdItemsPurchased HouseholdItemOrder[] @relation("HouseholdItemBuyer")
-  householdItemsCreated HouseholdItem[] @relation("HouseholdItemCreatedBy")
-  
-  // NEW: Agent assignments for household items
+  householdItemsCreated   HouseholdItem[] @relation("HouseholdItemCreatedBy")
   assignedHouseholdOrders HouseholdItemOrder[] @relation("AssignedAgent")
   
-  // NEW: Reserved properties (real estate reservation fee)
-  reservedProperties Item[] @relation("ReservationUser")
+  // Reservation system
+  reservedProperties     Item[] @relation("ReservationUser")
   reservationFeePayments ReservationFeePayment[] @relation("ReservationFeePayments")
   
-  // NEW: Chat System - Real Estate
-  chatsAsUser               Chat[]                @relation("ChatUser")
-  chatsAsAgent              Chat[]                @relation("ChatAgent")
-  chatsClosedByAdmin        Chat[]                @relation("ChatClosedByAdmin")
-  sentChatMessages          ChatMessageModel[]    @relation("ChatMessageSender")
-  ratingsGiven              UserRating[]          @relation("UserGivenRatings")
-  ratingsReceived           UserRating[]          @relation("UserReceivedRatings")
-  agentStats                AgentStatistics?      @relation("AgentStats")
-  activityLogs              AgentActivityLog[]    @relation("AgentActivityLogs")
-  reportsFiled              ConversationReport[]  @relation("UserReports")
-  reportedFor               ConversationReport[]  @relation("AgentReportedFor")
-  reportsReviewed           ConversationReport[]  @relation("AdminReviews")
-  agentFeePayments          AgentFeePayment[]     @relation("AgentFeePayments")
+  // Chat System - Real Estate (NEW AI CHAT)
+  chatsAsUser              Chat[] @relation("ChatUser")
+  chatsAsAgent             Chat[] @relation("ChatAgent")
+  chatsClosedByAdmin       Chat[] @relation("ChatClosedByAdmin")
+  sentChatMessages         ChatMessage[] @relation("ChatMessageSender")
+  reservationFeesConfirmed ReservationFeePayment[] @relation("ReservationFeeConfirmedBy")
+  assignedReservationFees  ReservationFeePayment[] @relation("ReservationFeeAgent")
+  
+  // User ratings & agent stats
+  ratingsGiven      UserRating[] @relation("UserGivenRatings")
+  ratingsReceived   UserRating[] @relation("UserReceivedRatings")
+  agentStats        AgentStatistics? @relation("AgentStats")
+  activityLogs      AgentActivityLog[] @relation("AgentActivityLogs")
+  reportsFiled      ConversationReport[] @relation("UserReports")
+  reportedFor       ConversationReport[] @relation("AgentReportedFor")
+  reportsReviewed   ConversationReport[] @relation("AdminReviews")
+  agentFeePayments  AgentFeePayment[] @relation("AgentFeePayments")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  passwordResetToken          String?   @unique
+  passwordResetToken          String? @unique
   passwordResetTokenExpiresAt DateTime?
 
-  isEmailVerified                 Boolean   @default(false)
-  emailVerificationToken          String?   @unique
+  isEmailVerified                 Boolean @default(false)
+  emailVerificationToken          String? @unique
   emailVerificationTokenExpiresAt DateTime?
 }
 
@@ -148,10 +149,10 @@ model Item {
   whatsappClickCount Int       @default(0)
   lastViewedAt       DateTime?
 
-  interests   PropertyInterest[]   @relation("PropertyInterests")
-  messages    ChatMessage[]        @relation("PropertyMessages")
-  sales       Sale[]               @relation("PropertySales")
-  views       PropertyView[]       @relation("PropertyViews")
+  interests   PropertyInterest[] @relation("PropertyInterests")
+  messages    PropertyChatMessage[] @relation("PropertyMessages")
+  sales       Sale[]             @relation("PropertySales")
+  views       PropertyView[]     @relation("PropertyViews")
   engagements PropertyEngagement[] @relation("PropertyEngagements")
 
   agentCommissionPercent   Float @default(0)
@@ -169,40 +170,33 @@ model Item {
   agentId String? @db.Uuid
   agent   User?   @relation("AgentRelation", fields: [agentId], references: [id], onDelete: SetNull)
 
-  // NEW: payments related to this property
-  payments Payment[]
+  payments           Payment[]
   viewingFeePayments ViewingFeePayment[] @relation("PropertyViewingFees")
   
-  // NEW: Real Estate Reservation Fee System (for house renting/selling)
-  reservationFeeAmount    Float                   @default(10000)  // ₦10,000 NON-REFUNDABLE fee
-  reservationFeeStatus    ReservationFeeStatus?
-  reservationFeePaidAt    DateTime?
+  // Reservation system
+  reservationFeeAmount   Float   @default(10000)
+  reservationFeeStatus   ReservationFeeStatus?
+  reservationFeePaidAt   DateTime?
   
-  // Track which user has active reservation
-  currentReservationBy    String?                 @db.Uuid
-  reservationUser         User?                   @relation("ReservationUser", fields: [currentReservationBy], references: [id], onDelete: SetNull)
+  currentReservationBy   String? @db.Uuid
+  reservationUser        User?   @relation("ReservationUser", fields: [currentReservationBy], references: [id], onDelete: SetNull)
   
-  // Reservation timeline
-  reservationStartedAt    DateTime?
-  reservationExpiresAt    DateTime?               // 7 days from start
+  reservationStartedAt   DateTime?
+  reservationExpiresAt   DateTime?
   
-  // For when user doesn't like property
-  reservationRefundedAt   DateTime?
+  reservationRefundedAt  DateTime?
   reservationRefundReason String?
   
-  // Agent viewing
   agentViewingScheduledAt DateTime?
   agentViewingCompletedAt DateTime?
   agentViewingApproved    Boolean?
   
-  // Property lock (shows PENDING to others)
-  isReserved              Boolean                 @default(false)
+  isReserved             Boolean @default(false)
   
-  // Reservation fee payments
-  reservationFeePayments  ReservationFeePayment[] @relation("PropertyReservationFees")
+  reservationFeePayments ReservationFeePayment[] @relation("PropertyReservationFees")
   
-  // NEW: Chat System
-  chats                   Chat[]                  @relation("ChatProperty")
+  // AI Chat System
+  chats Chat[] @relation("ChatProperty")
 
   isDeleted      Boolean   @default(false)
   deletedAt      DateTime?
@@ -252,7 +246,7 @@ enum ItemType {
   HOUSEHOLD_ITEM
 }
 
-// ==================== HOUSEHOLD ITEMS (NEW) ====================
+// ==================== HOUSEHOLD ITEMS ====================
 
 model HouseholdItem {
   id          String                @id @default(uuid()) @db.Uuid
@@ -261,28 +255,22 @@ model HouseholdItem {
   price       Float
   location    String?
   
-  // Type: STOCK or CUSTOM
   type        HouseholdItemType     @default(STOCK)
   status      HouseholdItemStatus   @default(AVAILABLE)
   
-  // For CUSTOM items
-  productionDaysMin Int?              // 10 days min
-  productionDaysMax Int?              // 30 days max
-  customizationOptions Json?          // Available colors, sizes, materials
+  productionDaysMin Int?
+  productionDaysMax Int?
+  customizationOptions Json?
   
-  // Images
   images      HouseholdItemImage[]
   
-  // Seller info
   sellerId    String                @db.Uuid
   seller      User                  @relation("HouseholdItemSeller", fields: [sellerId], references: [id], onDelete: Cascade)
   createdBy   String?               @db.Uuid
   createdByUser User?               @relation("HouseholdItemCreatedBy", fields: [createdBy], references: [id])
   
-  // Virtual assistant chats about this item
   virtualAssistantChats VirtualAssistantChat[] @relation("ItemVAChats")
   
-  // Orders/purchases
   orders      HouseholdItemOrder[]  @relation("ItemOrders")
   
   viewCount   Int                   @default(0)
@@ -300,14 +288,14 @@ model HouseholdItem {
 }
 
 enum HouseholdItemType {
-  STOCK        // Already exists, single item
-  CUSTOM       // Made-to-order, can make unlimited
+  STOCK
+  CUSTOM
 }
 
 enum HouseholdItemStatus {
-  AVAILABLE    // Can order
-  DELISTED     // Seller removed it
-  ARCHIVED     // Old item
+  AVAILABLE
+  DELISTED
+  ARCHIVED
 }
 
 model HouseholdItemImage {
@@ -320,7 +308,6 @@ model HouseholdItemImage {
   @@index([itemId])
 }
 
-// Orders for household items (like sales for real estate)
 model HouseholdItemOrder {
   id                String                  @id @default(uuid()) @db.Uuid
   
@@ -332,62 +319,50 @@ model HouseholdItemOrder {
   
   sellerId          String                  @db.Uuid
   
-  // Agent assignment (MANDATORY)
   assignedAgentId   String?                 @db.Uuid
   assignedAgent     User?                   @relation("AssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
   
-  // Order amount
-  amount            Float                   // Total price
+  amount            Float
   
-  // Payment tracking
   payments          HouseholdItemPayment[]
   
-  // CUSTOM items only
-  customizations    Json?                   // {color: "black", size: "3-seater", material: "leather"}
+  customizations    Json?
   
-  // Status tracking
   status            HouseholdItemOrderStatus @default(PAYMENT_PENDING)
   
-  // Payment tracking
   paymentStatus     PaymentStatus           @default(PENDING)
   paymentId         String?                 @db.Uuid
   paidAt            DateTime?
   
-  // For CUSTOM items - production tracking
   productionStatus  CustomProductionStatus? @default(NOT_STARTED)
   productionStartedAt DateTime?
   expectedCompletionDate DateTime?
   
-  // Day 21: Final photos (for custom)
-  finalPhotosUrl    String[]                // Array of photo URLs
+  finalPhotosUrl    String[]
   finalPhotosApprovedAt DateTime?
   finalPhotosApprovalStatus CustomPhotoApprovalStatus?
   finalPhotosRejectionReason String?
   
-  // For STOCK items - delivery & agent verification
   deliveryStatus    StockDeliveryStatus?
   verifiedByAgentAt DateTime?
   agentVerificationNotes String?
   
-  // REFUND POLICY (STOCK ITEMS ONLY)
-  isItemNew         Boolean?                // Is this a new item (eligible for 3-day refund)?
-  refundEligibleUntil DateTime?              // 3 days after delivery (only for new items)
-  refundRequested   Boolean @default(false) // User requested refund
+  isItemNew         Boolean?
+  refundEligibleUntil DateTime?
+  refundRequested   Boolean @default(false)
   refundRequestedAt DateTime?
   refundAmount      Float?
   refundReason      String?
   refundedAt        DateTime?
-  refundStatus      RefundStatus?           // PENDING, APPROVED, REJECTED
+  refundStatus      RefundStatus?
   
-  // AGENT PAYMENT (Only paid after 3 days with no complaints)
-  agentFeeAmount    Float?                  // Agent commission
-  agentFeePaid      Boolean @default(false) // Paid only after 3-day window with no complaints
+  agentFeeAmount    Float?
+  agentFeePaid      Boolean @default(false)
   agentFeePaidAt    DateTime?
-  complaintRaised   Boolean @default(false) // Did buyer raise complaint within 3 days?
+  complaintRaised   Boolean @default(false)
   complaintRaisedAt DateTime?
   complaintReason   String?
   
-  // Completion
   completedAt       DateTime?
   agentCompletionNotes String?
   
@@ -403,38 +378,38 @@ model HouseholdItemOrder {
 }
 
 enum HouseholdItemOrderStatus {
-  PAYMENT_PENDING         // User hasn't paid yet
-  PAYMENT_CONFIRMED       // User paid H12
-  AGENT_CONTACTED         // Agent is contacted (for both stock & custom)
-  AGENT_MEETING_SCHEDULED // For STOCK: meeting scheduled with agent
-  AGENT_VERIFICATION_PENDING // For STOCK: waiting for agent to verify
-  PRODUCTION_IN_PROGRESS  // For CUSTOM: maker is building
-  AWAITING_FINAL_PHOTOS   // For CUSTOM: waiting for Day 21 photos
-  FINAL_PHOTOS_APPROVED   // For CUSTOM: user approved photos
-  AWAITING_DELIVERY       // For both: ready to deliver
-  DELIVERED               // Item delivered/received
-  COMPLETED               // Deal done
-  CANCELLED               // User cancelled
-  DISPUTED                // Dispute filed
-  REFUNDED                // Refund processed
+  PAYMENT_PENDING
+  PAYMENT_CONFIRMED
+  AGENT_CONTACTED
+  AGENT_MEETING_SCHEDULED
+  AGENT_VERIFICATION_PENDING
+  PRODUCTION_IN_PROGRESS
+  AWAITING_FINAL_PHOTOS
+  FINAL_PHOTOS_APPROVED
+  AWAITING_DELIVERY
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  DISPUTED
+  REFUNDED
 }
 
 enum CustomProductionStatus {
   NOT_STARTED
-  MATERIALS_SOURCING      // Days 1-5
-  FRAME_ASSEMBLY          // Days 6-10
-  UPHOLSTERY_WORK         // Days 11-18
-  QUALITY_CHECK           // Days 19-20
-  FINAL_PHOTOS_READY      // Day 21
-  READY_FOR_DELIVERY      // After approval
+  MATERIALS_SOURCING
+  FRAME_ASSEMBLY
+  UPHOLSTERY_WORK
+  QUALITY_CHECK
+  FINAL_PHOTOS_READY
+  READY_FOR_DELIVERY
 }
 
 enum CustomPhotoApprovalStatus {
-  PENDING                 // Waiting for user approval
-  APPROVED                // User approved
-  CHANGES_REQUESTED       // User wants changes
-  CHANGES_COMPLETED       // Changes made
-  REJECTED                // User rejected
+  PENDING
+  APPROVED
+  CHANGES_REQUESTED
+  CHANGES_COMPLETED
+  REJECTED
 }
 
 enum StockDeliveryStatus {
@@ -450,7 +425,7 @@ enum RefundStatus {
   REJECTED
 }
 
-// ==================== VIRTUAL ASSISTANT CHAT (NEW) ====================
+// ==================== VIRTUAL ASSISTANT CHAT ====================
 
 model VirtualAssistantChat {
   id              String                        @id @default(uuid()) @db.Uuid
@@ -461,21 +436,17 @@ model VirtualAssistantChat {
   householdItemId String                        @db.Uuid
   householdItem   HouseholdItem                 @relation("ItemVAChats", fields: [householdItemId], references: [id], onDelete: Cascade)
   
-  // Chat status
   status          VAChatStatus                  @default(ACTIVE)
   
-  // Gatekeeper checkpoints (user must understand before agent contact)
-  checkpoint1_ItemTypeUnderstand Boolean        @default(false) // Confirmed item type (stock vs custom)
-  checkpoint2_PaymentWarning     Boolean        @default(false) // Confirmed payment non-refundable
-  checkpoint3_H12Liability       Boolean        @default(false) // Confirmed H12 liability limits
-  checkpoint4_ProcessUnderstand  Boolean        @default(false) // For custom: understood timeline & Day 21 approval
-  checkpoint5_FinalConfirm       Boolean        @default(false) // User clicked [I UNDERSTAND]
+  checkpoint1_ItemTypeUnderstand Boolean        @default(false)
+  checkpoint2_PaymentWarning     Boolean        @default(false)
+  checkpoint3_H12Liability       Boolean        @default(false)
+  checkpoint4_ProcessUnderstand  Boolean        @default(false)
+  checkpoint5_FinalConfirm       Boolean        @default(false)
   
-  // Custom item specific
-  customizations Json?                          // Selected color, size, material (if custom)
-  totalPrice     Float?                         // Calculated price shown to user
+  customizations Json?
+  totalPrice     Float?
   
-  // When user ready to proceed
   readyForPayment Boolean                       @default(false)
   readyForPaymentAt DateTime?
   
@@ -491,10 +462,10 @@ model VirtualAssistantChat {
 }
 
 enum VAChatStatus {
-  ACTIVE                  // User still chatting with VA
-  AWAITING_PAYMENT        // User confirmed, waiting to pay
-  COMPLETED               // User paid, moved to agent
-  ABANDONED               // User left without paying
+  ACTIVE
+  AWAITING_PAYMENT
+  COMPLETED
+  ABANDONED
 }
 
 enum VAStage {
@@ -502,22 +473,19 @@ enum VAStage {
   POST_PAYMENT_SCHEDULED
 }
 
-
 model VAChatMessage {
   id                String @id @default(uuid()) @db.Uuid
   
   chatId            String @db.Uuid
   chat              VirtualAssistantChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
   
-  // Who sent it (USER or SYSTEM/VA)
   senderType        VAChatSenderType
   
   message           String @db.Text
   messageType       VAChatMessageType @default(TEXT)
   
-  // If VA sends options (checkpoint confirmations)
   actionRequired    Boolean @default(false)
-  actionType        String? // "CONFIRM_UNDERSTANDING", "SELECT_CUSTOMIZATION", etc.
+  actionType        String?
   
   createdAt         DateTime @default(now())
   
@@ -533,46 +501,78 @@ enum VAChatSenderType {
 
 enum VAChatMessageType {
   TEXT
-  SYSTEM_MESSAGE          // "Please confirm you understand"
-  CUSTOMIZATION_OPTIONS   // Shows color/size choices
-  PAYMENT_CONFIRMATION    // Shows total price
-  FINAL_CONFIRMATION      // "Ready to proceed?"
+  SYSTEM_MESSAGE
+  CUSTOMIZATION_OPTIONS
+  PAYMENT_CONFIRMATION
+  FINAL_CONFIRMATION
+}
+
+// ==================== AI RESPONSE LIBRARY ====================
+
+model AIResponse {
+  id                String   @id @default(uuid()) @db.Uuid
+  
+  responseType      String   // "greeting", "question", "explanation", "unlock_prompt"
+  content           String   @db.Text
+  keyword           String?
+  
+  propertyType      String?  // "HOUSE", "HOUSEHOLD_ITEM", null (all)
+  category          String?  // "FOR_SALE", "FOR_RENT", null (all)
+  language          String   @default("en")
+  
+  isActive          Boolean  @default(true)
+  priority          Int      @default(0)
+  
+  createdBy         String   @db.Uuid
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@index([responseType])
+  @@index([isActive])
+  @@map("ai_responses")
 }
 
 // ==================== CHAT SYSTEM - REAL ESTATE ====================
 
 enum ChatStatus {
-  OPEN                    // Chat just created, agent hasn't responded
-  ACTIVE                  // Agent has engaged with user
-  PAYMENT_RECEIVED        // Admin confirmed payment received
-  CLOSED                  // Chat closed by admin
-  CANCELLED               // User cancelled before completion
+  OPEN
+  ACTIVE
+  PAYMENT_RECEIVED
+  CLOSED
+  CANCELLED
 }
 
 enum ChatMessageType {
-  TEXT                    // Normal message
-  SYSTEM                  // System notification
-  ADMIN_NOTIFICATION      // Admin alert
-  AGENT_NOTIFICATION      // Agent specific notification
+  TEXT
+  SYSTEM
+  ADMIN_NOTIFICATION
+  AGENT_NOTIFICATION
+}
+
+enum ChatSenderType {
+  USER
+  AI_AGENT
+  REAL_AGENT
+  SYSTEM
 }
 
 enum AgentActionType {
-  CHAT_ASSIGNED           // Chat assigned to agent
-  MESSAGE_SENT            // Agent sent message
-  MESSAGE_READ            // Agent read user message
-  FIRST_RESPONSE          // Agent's first response
-  CALL_INITIATED          // Agent called user
-  CALL_ENDED              // Call ended
-  PAYMENT_CONFIRMED       // Admin confirmed payment
-  CHAT_CLOSED             // Chat closed
+  CHAT_ASSIGNED
+  MESSAGE_SENT
+  MESSAGE_READ
+  FIRST_RESPONSE
+  CALL_INITIATED
+  CALL_ENDED
+  PAYMENT_CONFIRMED
+  CHAT_CLOSED
 }
 
 enum AgentPaymentStatus {
-  PENDING                 // Waiting for user payment
-  PAYMENT_RECEIVED        // User payment confirmed by admin
-  AGENT_PAID              // Agent has been paid
-  CANCELLED               // Transaction cancelled
-  FAILED                  // Payment failed
+  PENDING
+  PAYMENT_RECEIVED
+  AGENT_PAID
+  CANCELLED
+  FAILED
 }
 
 enum UserRatingCategory {
@@ -595,65 +595,74 @@ enum ReportReason {
 model Chat {
   id                        String                @id @default(uuid()) @db.Uuid
   
-  // Core relationships
   userId                    String                @db.Uuid
   user                      User                  @relation("ChatUser", fields: [userId], references: [id], onDelete: Cascade)
   
   agentId                   String?               @db.Uuid
   agent                     User?                 @relation("ChatAgent", fields: [agentId], references: [id], onDelete: SetNull)
-
   
   propertyId                String                @db.Uuid
   property                  Item                  @relation("ChatProperty", fields: [propertyId], references: [id], onDelete: Cascade) 
   
-  // Chat status
   status                    ChatStatus            @default(OPEN)
   
-  // Messages
-  messages                  ChatMessageModel[]
+  // AI PHASE TRACKING (NEW)
+  aiPhaseStartedAt          DateTime?
+  aiPhaseEndedAt            DateTime?
+  aiUnlockKeywordUsed       String?
+  aiConversationCount       Int                   @default(0)
   
-  // Agent responsiveness tracking
+  // REAL AGENT PHASE TRACKING (NEW)
+  agentPhaseStartedAt       DateTime?
+  agentFirstMessageAt       DateTime?
+  agentLastMessageAt        DateTime?
+  agentMessageCount         Int                   @default(0)
+  
+  // RESERVATION FEE TRACKING (NEW)
+  reservationFeeAmount      Float                 @default(10000)
+  reservationFeePaidAt      DateTime?
+  reservationExpiresAt      DateTime?
+  isReservationExpired      Boolean               @default(false)
+  reservationExpiredAt      DateTime?
+  
+  messages                  ChatMessage[]
+  
   createdAt                 DateTime              @default(now())
-  firstAgentResponseAt      DateTime?             // When agent first responded
-  lastAgentResponseAt       DateTime?             // Latest agent response
+  firstAgentResponseAt      DateTime?
+  lastAgentResponseAt       DateTime?
   agentResponseCount        Int                   @default(0)
   agentFeePayment           AgentFeePayment?      @relation("AgentFeePayment")
   
-  // User activity
   userMessageCount          Int                   @default(0)
   lastUserMessageAt         DateTime?
   
-  // Agent performance metrics
-  averageResponseTimeMinutes Int?                 // Time between user msg and agent response
-  wasAgentResponsive        Boolean               @default(false) // True if responded within 24h
-  agentMissedFirstResponse  Boolean               @default(false) // Didn't respond in 24h
+  averageResponseTimeMinutes Int?
+  wasAgentResponsive        Boolean               @default(false)
+  agentMissedFirstResponse  Boolean               @default(false)
 
-  vaStage VAStage @default(POST_PAYMENT_INIT)
+  vaStage                   VAStage               @default(POST_PAYMENT_INIT)
   
-  // Payment tracking
-  paymentReceivedAt         DateTime?             // When admin marked payment received
+  paymentReceivedAt         DateTime?
   agentPaymentStatus        AgentPaymentStatus    @default(PENDING)
   
-  // Agent fee details (shown in chat for transparency)
-  agentFeeAmount            Float?                // Amount agent will receive
-  agentFeePercentage        Float?                // Percentage of deal (e.g., 10%)
-  agentPaymentAccountDetails Json?                // { bankName, accountNumber, accountName }
+  agentFeeAmount            Float?
+  agentFeePercentage        Float?
+  agentPaymentAccountDetails Json?
   agentPaidAt               DateTime?
   
-  // Chat closure
   closedAt                  DateTime?
   closedByAdminId           String?               @db.Uuid
   closedByAdmin             User?                 @relation("ChatClosedByAdmin", fields: [closedByAdminId], references: [id])
-  closureReason             String?               // PAYMENT_RECEIVED, USER_CANCELLED, AGENT_INACTIVE
+  closureReason             String?
   
-  // User rating & review
   userRating                UserRating?
   
-  // Reports
   reports                   ConversationReport[]
   
-  // Activity logs
   activityLogs              AgentActivityLog[]
+  
+  // OPPOSITE RELATION FOR ReservationFeePayment (NEW)
+  reservationFeePayment     ReservationFeePayment?
   
   updatedAt                 DateTime              @updatedAt
   
@@ -663,36 +672,42 @@ model Chat {
   @@index([status])
   @@index([createdAt])
   @@index([paymentReceivedAt])
+  @@index([reservationExpiresAt])
   @@map("chats")
 }
 
-model ChatMessageModel {
+model ChatMessage {
   id                        String                @id @default(uuid()) @db.Uuid
   
-  chatId                    String                @db.Uuid
-  chat                      Chat                  @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId                    String?               @db.Uuid
+  chat                      Chat?                 @relation(fields: [chatId], references: [id], onDelete: Cascade)
   
-  // Who sent it
-  senderId                  String                @db.Uuid
-  sender                    User                  @relation("ChatMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  // SENDER TYPE (NEW)
+  senderType                ChatSenderType        @default(USER)
   
-  // Message content
+  senderId                  String?               @db.Uuid
+  sender                    User?                 @relation("ChatMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  
   message                   String                @db.Text
   messageType               ChatMessageType       @default(TEXT)
   
-  // Message read tracking
-  readAt                    DateTime?             // When recipient read message
+  // AI TRACKING (NEW)
+  isAiGenerated             Boolean               @default(false)
+  aiResponseId              String?
+  aiConfidenceScore         Float?
   
-  // Metadata for audit trail
-  metadata                  Json?                 // { ipAddress, deviceInfo, location }
+  readAt                    DateTime?
+  
+  metadata                  Json?
   
   createdAt                 DateTime              @default(now())
-  updatedAt                 DateTime              @updatedAt
+  updatedAt                 DateTime              @default(now())
   
   @@index([chatId])
   @@index([senderId])
+  @@index([senderType])
   @@index([createdAt])
-  @@map("chat_messages_model")
+  @@map("chat_messages")
 }
 
 model UserRating {
@@ -707,23 +722,19 @@ model UserRating {
   agentId                   String                @db.Uuid
   agent                     User                  @relation("UserReceivedRatings", fields: [agentId], references: [id], onDelete: Cascade)
   
-  // Rating categories (1-5 stars)
-  responsivenessRating      Int?                  // 1-5
-  professionalismRating     Int?                  // 1-5
-  helpfulnessRating         Int?                  // 1-5
-  knowledgeRating           Int?                  // 1-5
-  trustworthinessRating     Int?                  // 1-5
-  overallRating             Int                   // 1-5 REQUIRED
+  responsivenessRating      Int?
+  professionalismRating     Int?
+  helpfulnessRating         Int?
+  knowledgeRating           Int?
+  trustworthinessRating     Int?
+  overallRating             Int
   
-  // Review text
   reviewText                String?               @db.Text
   
-  // Tip for good service
-  tipAmount                 Float?                // User can tip agent
+  tipAmount                 Float?
   tipPaid                   Boolean               @default(false)
   tipPaidAt                 DateTime?
   
-  // Admin follow-up
   adminRequestedRating      Boolean               @default(false)
   adminRequestedAt          DateTime?
   
@@ -743,31 +754,25 @@ model AgentStatistics {
   agentId                   String                @db.Uuid @unique
   agent                     User                  @relation("AgentStats", fields: [agentId], references: [id], onDelete: Cascade)
   
-  // Chat metrics
   totalChatsAssigned        Int                   @default(0)
   totalChatsCompleted       Int                   @default(0)
   totalChatsCancelled       Int                   @default(0)
   
-  // Response metrics
   averageResponseTimeMinutes Int?
   responsesWithin24Hours    Int                   @default(0)
   responsesAfter24Hours     Int                   @default(0)
   
-  // Rating metrics
   averageOverallRating      Float?
   averageResponsivenessRating Float?
   averageProfessionalismRating Float?
   averageHelpfulnessRating  Float?
   totalRatingsReceived      Int                   @default(0)
   
-  // Earnings
   totalEarnings             Float                 @default(0)
   totalTipsEarned           Float                 @default(0)
   
-  // Activity
   lastActivityAt            DateTime?
   
-  // Status
   isActive                  Boolean               @default(true)
   isWarned                  Boolean               @default(false)
   banReason                 String?
@@ -789,13 +794,10 @@ model AgentActivityLog {
   agentId                   String                @db.Uuid
   agent                     User                  @relation("AgentActivityLogs", fields: [agentId], references: [id], onDelete: Cascade)
   
-  // Action type
   actionType                AgentActionType
   
-  // Additional context
   metadata                  Json?
   
-  // For audit
   ipAddress                 String?
   userAgent                 String?
   
@@ -820,11 +822,9 @@ model ConversationReport {
   reportedAgentId           String                @db.Uuid
   reportedAgent             User                  @relation("AgentReportedFor", fields: [reportedAgentId], references: [id])
   
-  // Report details
   reason                    ReportReason
   description               String                @db.Text
   
-  // Admin review
   reviewedByAdminId         String?               @db.Uuid
   reviewedByAdmin           User?                 @relation("AdminReviews", fields: [reviewedByAdminId], references: [id])
   reviewedAt                DateTime?
@@ -848,23 +848,18 @@ model AgentFeePayment {
   agentId                   String                @db.Uuid  
   agent                     User                  @relation("AgentFeePayments", fields: [agentId], references: [id], onDelete: Cascade)
   
-  // Payment details
   amount                    Float
   percentage                Float
   
-  // Bank details
   bankName                  String
   accountNumber             String
   accountName               String
   
-  // Payment status
   status                    AgentPaymentStatus    @default(PENDING)
   
-  // Payment confirmation
   userPaymentConfirmedAt    DateTime?
   agentPaymentConfirmedAt   DateTime?
   
-  // Metadata
   metadata                  Json?
   
   createdAt                 DateTime              @default(now())
@@ -927,7 +922,7 @@ enum EngagementType {
   DOWNLOADED_BROCHURE
 }
 
-// ==================== INTERESTS / CHAT ====================
+// ==================== INTERESTS / MESSAGES ====================
 
 enum InterestStatus {
   ACTIVE
@@ -970,7 +965,8 @@ model PropertyInterest {
   @@map("property_interests")
 }
 
-model ChatMessage {
+// OLD: Simple property interest messages (RENAMED to PropertyChatMessage)
+model PropertyChatMessage {
   id            String      @id @default(uuid()) @db.Uuid
   propertyId    String      @db.Uuid
   senderId      String      @db.Uuid
@@ -990,7 +986,7 @@ model ChatMessage {
   @@index([senderId])
   @@index([receiverId])
   @@index([createdAt])
-  @@map("chat_messages")
+  @@map("property_chat_messages")
 }
 
 // ==================== SALES / DEALS / PAYMENTS ====================
@@ -1013,7 +1009,6 @@ model Sale {
   rentalStartDate DateTime?
   rentalEndDate   DateTime?
 
-  // NEW: manual payment details + finance review
   paymentMethod       PaymentMethod?
   paymentReference    String?
   financeStatus       FinanceStatus  @default(PENDING)
@@ -1029,7 +1024,6 @@ model Sale {
   buyer    User @relation("Purchases", fields: [buyerId], references: [id], onDelete: Cascade)
   seller   User @relation("Sales", fields: [sellerId], references: [id], onDelete: Cascade)
 
-  // NEW: linked payments & commissions
   payments    Payment[]
   commissions Commission[]
 
@@ -1041,7 +1035,6 @@ model Sale {
   @@map("sales")
 }
 
-// Payment providers for manual and Paystack phases
 enum PaymentProvider {
   MANUAL_TRANSFER
   PAYSTACK
@@ -1074,7 +1067,6 @@ enum CommissionStatus {
   REJECTED
 }
 
-// All money flows
 model Payment {
   id         String          @id @default(uuid()) @db.Uuid
   saleId     String          @db.Uuid
@@ -1112,11 +1104,9 @@ model ViewingFeePayment {
   status            PaymentStatus @default(PENDING)
   paidAt            DateTime?
   
-  // Commission splits
   agentShare        Float
   companyShare      Float
   
-  // Metadata
   metadata          Json?
   
   createdAt         DateTime @default(now())
@@ -1132,28 +1122,48 @@ model ViewingFeePayment {
   @@map("viewing_fee_payments")
 }
 
-// NEW: Reservation Fee Payments for Real Estate (House Renting/Selling)
+// ==================== RESERVATION FEE PAYMENTS ====================
+
 model ReservationFeePayment {
   id                String                @id @default(uuid()) @db.Uuid
   
-  // User & Property
   userId            String                @db.Uuid
   user              User                  @relation("ReservationFeePayments", fields: [userId], references: [id], onDelete: Cascade)
+  
   propertyId        String                @db.Uuid
   property          Item                  @relation("PropertyReservationFees", fields: [propertyId], references: [id], onDelete: Cascade)
   
-  // Payment details (₦10,000 non-refundable reservation fee)
-  amount            Float                 @default(10000)  // ₦10,000 NON-REFUNDABLE
+  // CHAT LINK (NEW)
+  chatId            String?               @db.Uuid @unique
+  chat              Chat?                 @relation(fields: [chatId], references: [id], onDelete: SetNull)
+  
+  // Agent assignment
+  assignedAgentId   String?               @db.Uuid
+  assignedAgent     User?                 @relation("ReservationFeeAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  
+  // Payment details
+  amount            Float                 @default(10000)
   paystackReference String                @unique
   status            PaymentStatus         @default(PENDING)
   paidAt            DateTime?
   
-  // H12 keeps 100% of reservation fee (NO refunds)
-  h12KeepsAmount    Float                 // H12 keeps 100% (non-refundable)
+  // 7-DAY COUNTDOWN (NEW)
+  expiresAt         DateTime?
+  isExpired         Boolean               @default(false)
+  expiredAt         DateTime?
   
-  // Agent fee (only paid if deal completes, not on reservation)
-  agentFeeAmount    Float?                // Agent commission paid after deal success
-  agentFeePaidAt    DateTime?
+  // H12 keeps 100%
+  h12KeepsAmount    Float                 @default(10000)
+  
+  // Agent commission (only if deal completes)
+  agentCommissionAmount Float?
+  agentCommissionPaidAt DateTime?
+  
+  // ADMIN TRACKING (NEW)
+  confirmedByAdminId String?               @db.Uuid
+  confirmedByAdmin   User?                 @relation("ReservationFeeConfirmedBy", fields: [confirmedByAdminId], references: [id])
+  confirmedAt       DateTime?
+  adminNotes        String?
   
   metadata          Json?
   
@@ -1162,7 +1172,10 @@ model ReservationFeePayment {
   
   @@index([userId])
   @@index([propertyId])
+  @@index([chatId])
+  @@index([assignedAgentId])
   @@index([status])
+  @@index([expiresAt])
   @@map("reservation_fee_payments")
 }
 
@@ -1172,7 +1185,8 @@ enum ReservationFeeStatus {
   REFUNDED
 }
 
-// NEW: Household items payments (similar to viewing fee payments)
+// ==================== HOUSEHOLD ITEM PAYMENTS ====================
+
 model HouseholdItemPayment {
   id                String                @id @default(uuid()) @db.Uuid
   
@@ -1185,7 +1199,6 @@ model HouseholdItemPayment {
   status            PaymentStatus         @default(PENDING)
   paidAt            DateTime?
   
-  // Commission breakdown
   h12CommissionPercent Float               @default(10)
   h12CommissionAmount  Float
   sellerAmount         Float
@@ -1201,7 +1214,8 @@ model HouseholdItemPayment {
   @@map("household_item_payments")
 }
 
-// Commissions for admins/agents
+// ==================== COMMISSIONS ====================
+
 model Commission {
   id        String           @id @default(uuid()) @db.Uuid
   saleId    String           @db.Uuid
@@ -1250,12 +1264,10 @@ model Landlord {
   email    String?
   address  String?
 
-  // Account details to pay landlord
   bankName      String?
   accountNumber String?
   accountName   String?
 
-  // Verification
   verificationStatus LandlordVerificationStatus @default(PENDING)
   nationalIdUrl      String?
   utilityBillUrl     String?
@@ -1266,7 +1278,6 @@ model Landlord {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relationships
   properties PropertyToLandlord[]
 }
 
