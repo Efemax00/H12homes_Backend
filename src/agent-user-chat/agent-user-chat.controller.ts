@@ -7,6 +7,7 @@ import {
   Param,
   UseGuards,
   HttpException,
+  BadRequestException,
   HttpStatus,
   Query,
   ParseIntPipe,
@@ -24,27 +25,49 @@ import { MarkPaymentReceivedDto } from './dto/mark-payment-received.dto';
 import { RateAgentDto } from './dto/rate-agent.dto';
 import { ReportConversationDto } from './dto/report-conversation.dto';
 import { ChatStatus } from '@prisma/client';
+import { ReservationFeePaymentService } from '../payment/reservation-fee-payment.service';
+
+
+
 
 @Controller('chats')
 @UseGuards(JwtAuthGuard)
 export class ChatsController {
-  constructor(private readonly chatsService: ChatsService) {}
+  constructor(
+    private readonly chatsService: ChatsService,
+    private readonly reservationFeePaymentService: ReservationFeePaymentService
+  ) {}
 
   /**
    * POST /chats/create
    * Create chat when user pays ₦10,000 reservation fee
    */
   @Post('create')
-  async createChat(
-    @Body() createChatDto: CreateChatDto,
-    @CurrentUser() user: { id: string },
-  ) {
-    try {
-      return await this.chatsService.createChat(createChatDto, user.id);
-    } catch (error) {
-      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+async createChat(
+  @Body() createChatDto: CreateChatDto,
+  @CurrentUser() user: { id: string },
+) {
+  try {
+    const { propertyId } = createChatDto;
+
+    // 🔥 VERIFY PAYMENT FIRST - Before creating chat
+    const hasReservation = await this.reservationFeePaymentService.hasUserActiveReservation(
+      user.id,
+      propertyId,
+    );
+
+    if (!hasReservation) {
+      throw new BadRequestException(
+        'You must pay ₦10,000 reservation fee first to start a chat',
+      );
     }
+
+    // ✅ THEN create chat (payment already verified)
+    return await this.chatsService.createChat(createChatDto, user.id);
+  } catch (error) {
+    throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
   }
+}
 
   /**
    * POST /chats/start

@@ -376,9 +376,10 @@ Be warm and congratulatory. Takes 1-2 days. Make them excited about next steps.`
     ];
   }
 
-  /**
- * Generate AI response for property chat
- * Used by AI Agent during chat phase
+/**
+ * Generate AI response for property chat - TIGHT CONSTRAINTS
+ * Used by AI Agent during chat phase ONLY
+ * This AI should ONLY ask about buyer preferences, never go off-script
  */
 async generateAIResponse(chatId: string, userMessage: string): Promise<string> {
   try {
@@ -390,7 +391,6 @@ async generateAIResponse(chatId: string, userMessage: string): Promise<string> {
             title: true,
             price: true,
             location: true,
-            shortDesc: true,
             bedrooms: true,
             bathrooms: true,
             category: true,
@@ -400,67 +400,111 @@ async generateAIResponse(chatId: string, userMessage: string): Promise<string> {
     });
 
     if (!chat?.property) {
-      return "I appreciate your interest! Let me get more information for you.";
+      return "I need to load the property details. Please try again.";
     }
 
-    const propertyContext = `
-Property Context:
-- Title: ${chat.property.title}
-- Price: ₦${Number(chat.property.price || 0).toLocaleString()}
-- Location: ${chat.property.location}
-- Description: ${chat.property.shortDesc ?? 'N/A'}
-- Bedrooms: ${chat.property.bedrooms ?? 'N/A'}
-- Bathrooms: ${chat.property.bathrooms ?? 'N/A'}
-- Category: ${chat.property.category}
-
-Keep replies short (2–3 sentences), helpful, and natural. Use Nigerian context.
-After 2–3 exchanges, guide them to meet the real agent using the unlock phrase.
-Never make up property facts.
-`;
-
-    const recentMessages = await this.prisma.chatMessage.findMany({
-      where: { chatId },
-      orderBy: { createdAt: 'desc' },
-      take: 6,
+    // Count conversation turns to know when to push for unlock keyword
+    const messageCount = await this.prisma.chatMessage.count({
+      where: { 
+        chatId,
+        senderId: AI_USER_ID, // Count only AI messages
+      },
     });
 
-    // Map roles better: if senderId is AI bot -> assistant, else user
-    const conversationHistory = recentMessages
-      .reverse()
-      .map((msg) => ({
-        role: msg.senderId === AI_USER_ID ? ('assistant' as const) : ('user' as const),
-        content: msg.message,
-      }));
+    // Get last user message for context
+    const lastMessages = await this.prisma.chatMessage.findMany({
+      where: { chatId },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
 
-    const systemPrompt = `You are H12 Homes' friendly AI Property Assistant.
+    // Build conversation - ONLY between user and AI
+    const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = 
+      lastMessages
+        .reverse()
+        .filter(msg => msg.senderId !== AI_USER_ID || !msg.message.includes('Connecting you')) // Skip transfer messages
+        .map(msg => ({
+          role: msg.senderId === AI_USER_ID ? 'assistant' : 'user',
+          content: msg.message,
+        }));
 
-${propertyContext}
+    // TIGHT SYSTEM PROMPT - No fluff, no generic advice
+    const systemPrompt = `You are an AI property assistant for H12 Homes. 
 
-Behavior rules:
-- Be warm, not robotic
-- Ask 1 short question when needed
-- If user asks about inspection/payment, push them toward "I'm ready to meet my agent"
-- Never invent details`;
+YOUR ONLY JOB:
+1. Ask about buyer's priority for THIS SPECIFIC PROPERTY (location, amenities, price, size, safety)
+2. Acknowledge their preference
+3. After 2-3 exchanges, gently push them toward: "Ready to meet your agent?"
+
+PROPERTY DETAILS (DO NOT INVENT):
+- Property: ${chat.property.title}
+- Price: ₦${Number(chat.property.price || 0).toLocaleString()}
+- Location: ${chat.property.location}
+- Bedrooms: ${chat.property.bedrooms ?? 'Not specified'}
+- Bathrooms: ${chat.property.bathrooms ?? 'Not specified'}
+
+RULES (STRICT):
+- Keep replies to 2 sentences MAX
+- Only ask about THIS property, never give generic real estate advice
+- Don't mention H12 locations, corporate structure, or company values
+- Don't answer questions about other properties or general real estate
+- If user asks something outside this property, redirect: "That's outside my scope - let me connect you with the agent"
+- Never make up property details
+- After 3 AI turns, subtly push: "Sounds like you know what you want! Ready to meet your dedicated agent?"
+
+DO NOT:
+- Explain company locations or structure
+- Give buying/renting advice
+- Discuss payment or contracts
+- Answer about OTHER properties
+- Be overly friendly or use emojis
+
+BE:
+- Professional
+- Direct
+- Property-focused`;
+
+    // If we've had 4+ turns, push toward unlock
+    let finalPrompt = userMessage;
+    if (messageCount >= 4) {
+      finalPrompt = `${userMessage}
+
+(Note: This is exchange ${messageCount}. If they seem ready, gently push: "Ready to connect with your agent?")`;
+    }
 
     const chatCompletion = await this.groq.chat.completions.create({
       messages: [
         { role: 'system', content: systemPrompt },
         ...conversationHistory,
-        { role: 'user', content: userMessage },
+        { role: 'user', content: finalPrompt },
       ],
       model: 'llama-3.3-70b-versatile',
-      temperature: 0.7,
-      max_tokens: 300,
-      top_p: 0.9,
+      temperature: 0.5, // LOWER temperature = more consistent, less creative
+      max_tokens: 150, // SHORTER responses
+      top_p: 0.8, // TIGHTER sampling
     });
 
-    return (
+    let response =
       chatCompletion.choices?.[0]?.message?.content ||
-      "Thanks for your interest! If you're ready, reply: **I'm ready to meet my agent**"
-    );
+      "Ready to meet your agent? Just reply with: **I'm ready to meet my agent**";
+
+    // SAFETY: If response is too long, truncate
+    if (response.length > 300) {
+      response = response.substring(0, 300) + '...';
+    }
+
+    // SAFETY: Never suggest generic platform features
+    if (response.toLowerCase().includes('search') || 
+        response.toLowerCase().includes('homepage') ||
+        response.toLowerCase().includes('browse')) {
+      response = "Ready to speak with your agent? Reply: **I'm ready to meet my agent**";
+    }
+
+    return response;
+
   } catch (error) {
     console.error('Error generating AI response:', error);
-    return "Thanks for that! To move forward quickly, reply: **I'm ready to meet my agent**";
+    return "Let me connect you with your agent. Reply: **I'm ready to meet my agent**";
   }
 }
 }
